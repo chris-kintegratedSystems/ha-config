@@ -1,0 +1,434 @@
+- id: '1772130227458'
+  alias: Garage Light - Off After 5 Min No Motion
+  description: 'Turns off garage light after 5 min no motion. Hardened with unavailability
+    handling, state trigger fallback, and a 30-minute absolute timeout.
+
+    '
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.aeotec_trisensor_garage_motion_detection
+    to: 'off'
+    for:
+      minutes: 5
+  - trigger: state
+    entity_id: binary_sensor.aeotec_trisensor_garage_motion_detection
+    to: unavailable
+    for:
+      minutes: 5
+  - trigger: state
+    entity_id: binary_sensor.aeotec_trisensor_garage_motion_detection
+    to: unknown
+    for:
+      minutes: 5
+  - trigger: state
+    entity_id: light.garage_light
+    to: 'on'
+    for:
+      minutes: 15
+  conditions:
+  - condition: state
+    entity_id: light.garage_light
+    state: 'on'
+  - condition: not
+    conditions:
+    - condition: state
+      entity_id: binary_sensor.aeotec_trisensor_garage_motion_detection
+      state: 'on'
+  actions:
+  - action: light.turn_off
+    target:
+      entity_id: light.garage_light
+  - action: notify.mobile_app_chriss_iphone
+    data:
+      message: 'Garage light auto-off. Trigger: {{ trigger.to_state.state if trigger.to_state
+        is defined else ''timeout'' }} | Motion sensor: {{ states(''binary_sensor.aeotec_trisensor_garage_motion_detection'')
+        }}
+
+        '
+  mode: single
+  max_exceeded: silent
+- id: '1772130389631'
+  alias: Garage Light - On When Any Garage Door Starts Opening
+  description: 'Turns on garage light as soon as a garage door begins opening (current_position
+    > 0) or recessed door sensor opens. Uses ratgdo position reporting (0=closed,
+    100=open).
+
+    '
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - cover.ratgdov25i_1746b4_door
+    - cover.ratgdov25i_1746c3_door
+    attribute: current_position
+    above: 0
+  - trigger: state
+    entity_id: binary_sensor.recessed_door_sensor_7_window_door_is_open
+    to: 'on'
+  conditions:
+  - condition: state
+    entity_id: light.garage_light
+    state: 'off'
+  actions:
+  - action: light.turn_on
+    target:
+      entity_id: light.garage_light
+    data:
+      brightness_pct: 100
+      transition: 1
+  mode: single
+- id: '1772131332140'
+  alias: Garage Doors - Auto-Close After 5 Min No Motion If Open & Path Clear
+  description: 'Closes any open garage door(s) after 5 min no motion and no obstruction.
+    Hardened with sensor unavailability fallback, absolute timeout, transition detection,
+    close verification with retry, and dual notification.
+
+    '
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.aeotec_trisensor_garage_motion_detection
+    to: 'off'
+    for:
+      minutes: 5
+  - trigger: state
+    entity_id: binary_sensor.aeotec_trisensor_garage_motion_detection
+    to: unavailable
+    for:
+      minutes: 5
+  - trigger: state
+    entity_id: binary_sensor.aeotec_trisensor_garage_motion_detection
+    to: unknown
+    for:
+      minutes: 5
+  - trigger: state
+    entity_id:
+    - cover.ratgdov25i_1746c3_door
+    - cover.ratgdov25i_1746b4_door
+    to: open
+    for:
+      minutes: 30
+  conditions:
+  - condition: or
+    conditions:
+    - condition: state
+      entity_id: cover.ratgdov25i_1746c3_door
+      state: open
+    - condition: state
+      entity_id: cover.ratgdov25i_1746b4_door
+      state: open
+  - condition: not
+    conditions:
+    - condition: state
+      entity_id: binary_sensor.aeotec_trisensor_garage_motion_detection
+      state: 'on'
+  - condition: not
+    conditions:
+    - condition: state
+      entity_id: cover.ratgdov25i_1746c3_door
+      state: opening
+  - condition: not
+    conditions:
+    - condition: state
+      entity_id: cover.ratgdov25i_1746c3_door
+      state: closing
+  - condition: not
+    conditions:
+    - condition: state
+      entity_id: cover.ratgdov25i_1746b4_door
+      state: opening
+  - condition: not
+    conditions:
+    - condition: state
+      entity_id: cover.ratgdov25i_1746b4_door
+      state: closing
+  - condition: state
+    entity_id: binary_sensor.ratgdov25i_1746c3_obstruction
+    state: 'off'
+  - condition: state
+    entity_id: binary_sensor.ratgdov25i_1746b4_obstruction
+    state: 'off'
+  actions:
+  - delay:
+      seconds: 5
+  - condition: state
+    entity_id: binary_sensor.ratgdov25i_1746c3_obstruction
+    state: 'off'
+  - condition: state
+    entity_id: binary_sensor.ratgdov25i_1746b4_obstruction
+    state: 'off'
+  - if:
+    - condition: state
+      entity_id: cover.ratgdov25i_1746c3_door
+      state: open
+    then:
+    - action: cover.close_cover
+      target:
+        entity_id: cover.ratgdov25i_1746c3_door
+    - wait_for_trigger:
+      - trigger: state
+        entity_id: cover.ratgdov25i_1746c3_door
+        to: closed
+      timeout:
+        seconds: 20
+      continue_on_timeout: true
+    - if:
+      - condition: not
+        conditions:
+        - condition: state
+          entity_id: cover.ratgdov25i_1746c3_door
+          state: closed
+      then:
+      - delay:
+          seconds: 3
+      - action: cover.close_cover
+        target:
+          entity_id: cover.ratgdov25i_1746c3_door
+      - wait_for_trigger:
+        - trigger: state
+          entity_id: cover.ratgdov25i_1746c3_door
+          to: closed
+        timeout:
+          seconds: 20
+        continue_on_timeout: true
+    - action: notify.mobile_app_chriss_iphone
+      data:
+        message: "Left Garage auto-close after 5 min no motion: {% if is_state('cover.ratgdov25i_1746c3_door',
+          'closed') %}\n  Closed successfully.\n{% else %}\n  WARNING - may not have
+          closed. Check now!\n{% endif %}\n"
+    - action: notify.mobile_app_claires_iphone
+      data:
+        message: "Left Garage auto-close after 5 min no motion: {% if is_state('cover.ratgdov25i_1746c3_door',
+          'closed') %}\n  Closed successfully.\n{% else %}\n  WARNING - may not have
+          closed. Check now!\n{% endif %}\n"
+  - if:
+    - condition: state
+      entity_id: cover.ratgdov25i_1746b4_door
+      state: open
+    then:
+    - action: cover.close_cover
+      target:
+        entity_id: cover.ratgdov25i_1746b4_door
+    - wait_for_trigger:
+      - trigger: state
+        entity_id: cover.ratgdov25i_1746b4_door
+        to: closed
+      timeout:
+        seconds: 20
+      continue_on_timeout: true
+    - if:
+      - condition: not
+        conditions:
+        - condition: state
+          entity_id: cover.ratgdov25i_1746b4_door
+          state: closed
+      then:
+      - delay:
+          seconds: 3
+      - action: cover.close_cover
+        target:
+          entity_id: cover.ratgdov25i_1746b4_door
+      - wait_for_trigger:
+        - trigger: state
+          entity_id: cover.ratgdov25i_1746b4_door
+          to: closed
+        timeout:
+          seconds: 20
+        continue_on_timeout: true
+    - action: notify.mobile_app_chriss_iphone
+      data:
+        message: "Right Garage auto-close after 5 min no motion: {% if is_state('cover.ratgdov25i_1746b4_door',
+          'closed') %}\n  Closed successfully.\n{% else %}\n  WARNING - may not have
+          closed. Check now!\n{% endif %}\n"
+    - action: notify.mobile_app_claires_iphone
+      data:
+        message: "Right Garage auto-close after 5 min no motion: {% if is_state('cover.ratgdov25i_1746b4_door',
+          'closed') %}\n  Closed successfully.\n{% else %}\n  WARNING - may not have
+          closed. Check now!\n{% endif %}\n"
+  mode: single
+  max_exceeded: silent
+- id: '1772488054290'
+  alias: Garage Light - On with Motion (If Off)
+  description: 'Turns on garage light when Aeotec TriSensor detects motion in garage,
+    but only if the light is currently off.
+
+    '
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.aeotec_trisensor_garage_motion_detection
+    to: 'on'
+  conditions:
+  - condition: state
+    entity_id: light.garage_light
+    state: 'off'
+  actions:
+  - action: light.turn_on
+    target:
+      entity_id: light.garage_light
+    data:
+      brightness_pct: 100
+      transition: 1
+  mode: restart
+- id: '1773023893660'
+  alias: Lights Sunset / Sunrise
+  description: Turns on lights (some dimmed) at sunset, off at sunrise
+  triggers:
+  - trigger: sun
+    event: sunset
+    id: sunset
+  - trigger: sun
+    event: sunrise
+    id: sunrise
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: sunset
+      sequence:
+      - action: light.turn_on
+        target:
+          entity_id: light.sunset_sunrise_group
+      - delay:
+          milliseconds: 500
+      - action: light.turn_on
+        target:
+          entity_id:
+          - light.console_light_2
+          - light.living_room_lamp_2
+        data:
+          brightness_pct: 20
+    - conditions:
+      - condition: trigger
+        id: sunrise
+      sequence:
+      - condition: state
+        entity_id: light.sunset_sunrise_group
+        state: 'on'
+      - action: light.turn_off
+        target:
+          entity_id: light.sunset_sunrise_group
+  mode: single
+- id: '1773136892946'
+  alias: Ben's Hatch
+  description: Ocean sound at 7 PM, sound pause at 7 AM
+  triggers:
+  - trigger: time
+    at: '19:00:00'
+    id: evening
+  - trigger: time
+    at: 07:00:00
+    id: morning
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: evening
+      sequence:
+      - action: media_player.volume_set
+        target:
+          entity_id: media_player.benjamins_hatch_media_player
+        data:
+          volume_level: 0.4
+      - action: media_player.select_sound_mode
+        target:
+          entity_id: media_player.benjamins_hatch_media_player
+        data:
+          sound_mode: Ocean
+      - action: media_player.media_play
+        target:
+          entity_id: media_player.benjamins_hatch_media_player
+    - conditions:
+      - condition: trigger
+        id: morning
+      sequence:
+      - action: media_player.media_pause
+        target:
+          entity_id: media_player.benjamins_hatch_media_player
+  mode: single
+- id: '1773261554369'
+  alias: Living Area Lighting Automation
+  description: Activate Different Scenes by Time of Day
+  triggers:
+  - trigger: sun
+    event: sunrise
+    offset: -03:00:00
+    id: morning
+  - trigger: sun
+    event: sunrise
+    offset: 00:00:00
+    id: day
+  - trigger: sun
+    event: sunset
+    offset: 01:00:00
+    id: evening
+  - trigger: time
+    at: '22:00:00'
+    id: night
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: morning
+      sequence:
+      - action: scene.turn_on
+        target:
+          entity_id: scene.morning_mode
+        data:
+          transition: 2
+    - conditions:
+      - condition: trigger
+        id: day
+      sequence:
+      - action: scene.turn_on
+        target:
+          entity_id: scene.day_mode
+        data:
+          transition: 2
+    - conditions:
+      - condition: trigger
+        id: evening
+      sequence:
+      - action: scene.turn_on
+        target:
+          entity_id: scene.chill_mode
+        data:
+          transition: 2
+    - conditions:
+      - condition: trigger
+        id: night
+      sequence:
+      - action: scene.turn_on
+        target:
+          entity_id: scene.night_mode
+        data:
+          transition: 2
+    default:
+    - action: notify.mobile_app_chriss_iphone
+      data:
+        message: 'Living Area Lighting: unexpected trigger hit default fallback, applied
+          night mode'
+    - action: scene.turn_on
+      target:
+        entity_id: scene.night_mode
+      data:
+        transition: 2
+  mode: single
+- id: '1773717709713'
+  alias: Ben's Light - Off After 5 Min No Motion
+  description: Turns off Ben's light if no motion detected for 5 minutes
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.living_room_camera_motion
+    to: 'off'
+    for:
+      minutes: 5
+  conditions:
+  - condition: state
+    entity_id: light.bens_light
+    state: 'on'
+  actions:
+  - action: light.turn_off
+    target:
+      entity_id: light.bens_light
+  mode: single

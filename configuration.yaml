@@ -1,0 +1,131 @@
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+template:
+  - sensor:
+      - name: "Chris Distance from Home"
+        unique_id: chris_distance_from_home
+        state: >
+          {% if is_state('person.chris', 'home') %}
+            Home
+          {% else %}
+            {{ (distance('person.chris', 'zone.home') * 0.621371) | round(1) }} mi away
+          {% endif %}
+
+      - name: "Claire Distance from Home"
+        unique_id: claire_distance_from_home
+        state: >
+          {% if is_state('person.claire', 'home') %}
+            Home
+          {% else %}
+            {{ (distance('person.claire', 'zone.home') * 0.621371) | round(1) }} mi away
+          {% endif %}
+          
+# ─── RECORDER ────────────────────────────────────────────────────────────────
+# Controls what gets written to your database (home-assistant_v2.db)
+# Goal: keep history meaningful, exclude noisy/useless entities
+
+recorder:
+  purge_keep_days: 30          # Keep 30 days of history, auto-purge older data
+  commit_interval: 5           # Write to DB every 5s instead of every state change
+                               # Reduces disk writes significantly on SD cards / SSDs
+
+  exclude:
+    # ── Domains to fully exclude ──────────────────────────────────────────────
+    domains:
+      - automation              # No need to log automation state changes
+      - updater                 # Update notifications don't need history
+      - sun                     # Sun position changes constantly, not useful
+      - weather                 # High frequency, large data, not useful in history
+
+    # ── Entity patterns to exclude ────────────────────────────────────────────
+    entity_globs:
+      - sensor.*_distance_from_home     # Distance sensors update too frequently
+      - sensor.*_signal_strength        # WiFi/Zigbee signal noise
+      - sensor.*_linkquality            # Zigbee link quality noise
+      - sensor.*_lqi                    # Same
+      - sensor.*_rssi                   # Radio signal noise
+      - sensor.time*                    # Time sensors change every minute
+      - sensor.date*                    # Date sensors
+      - sensor.*uptime*                 # Uptime counters
+      - sensor.*_last_seen              # Last seen timestamps
+
+    # ── Specific entities to exclude ─────────────────────────────────────────
+    entities:
+      # Fully Kiosk - updates constantly, not useful in history
+      - sensor.galaxy_tab_s9_battery_level
+      - sensor.galaxy_tab_s9_screen_brightness
+
+      # Add any other noisy entities here as you discover them
+
+
+  # ── Entities to ALWAYS include even if domain is excluded ────────────────
+  include:
+    entities:
+      - automation.garage_light_off_after_5_min_no_motion   # keep automation run history
+      - light.garage_light                                   # keep light history
+
+
+# ─── LOGGER ──────────────────────────────────────────────────────────────────
+# Controls what gets written to home-assistant.log
+# Goal: catch real errors, silence known noisy components
+
+logger:
+  default: warning              # Only log warnings and errors by default
+
+  logs:
+    # ── Silence known noisy components ───────────────────────────────────────
+    google_nest_sdm.event_media: error          # Suppress Nest camera media warnings
+    homeassistant.components.sonos: error       # Already broken speaker - silence warnings
+    homeassistant.components.recorder: error    # Suppress routine recorder messages
+    homeassistant.components.websocket_api: error
+    homeassistant.loader: error                 # Integration loader noise
+    aiohttp.access: error                       # HTTP access log noise
+
+    # ── Keep important components at info for visibility ──────────────────────
+    homeassistant.core: warning
+    homeassistant.components.automation: info   # See when automations fire
+    homeassistant.components.script: info       # See when scripts run
+
+    # ── Uncomment below temporarily when debugging a specific component ───────
+    # homeassistant.components.zwave_js: debug
+    # homeassistant.components.mqtt: debug
+    # custom_components.ratgdo: debug
+
+
+# ─── HISTORY ─────────────────────────────────────────────────────────────────
+# Controls what appears in the History panel in the UI
+# Mirrors recorder exclusions for a clean history view
+history: ~
+
+
+# ─── LOGBOOK ─────────────────────────────────────────────────────────────────
+# Controls what appears in the Logbook panel
+# Keep this clean so real events stand out
+
+logbook:
+  exclude:
+    domains:
+      - automation
+      - sun
+      - weather
+    entity_globs:
+      - sensor.*_distance_from_home
+      - sensor.*_signal_strength
+      - sensor.*_linkquality
+      - sensor.*_rssi
+      - sensor.time*
+      - sensor.date*
+      - sensor.*uptime*
+      - sensor.*_lqi        # add this line
+      - sensor.*_last_seen  # add this line too
+      
+browser_mod:
