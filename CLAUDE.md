@@ -162,8 +162,8 @@ light.bens_light
 | Doorbell | `camera.doorbell` | Vivint DBC300. Use `camera_view: auto` (not live). DBC300 has RTSP at `rtsp://user:PASS@IP:PORT/Video-00` but needs go2rtc to work in HA |
 | Izzy Camera | `camera.izzy_camera` | Nest camera. Use `camera_view: auto`. Rate-limit prone. |
 | Living Room | `camera.living_room_camera` | Nest camera. Use `camera_view: auto`. |
-| Nanit Nursery | `camera.nanit_nursery` | Nanit baby monitor via local RTMP restream. ffmpeg platform. See "Nanit integration" below. |
-| Nanit Second Room | `camera.nanit_second_room` | TODO(chris): confirm room name after provisioning. Same Nanit container. |
+| Nanit Benjamin | `camera.nanit_benjamin` | Nanit baby monitor via local RTMP restream. ffmpeg platform. See "Nanit integration" below. |
+| Nanit Travel | `camera.nanit_travel` | Portable Nanit unit. Same restream container. |
 | Doorbell Motion | `binary_sensor.doorbell_motion` | |
 
 **Camera rules:**
@@ -353,8 +353,8 @@ docker logs nanit | grep -i 'baby_uid'
 Copy each UID into the live `secrets.yaml` under:
 
 ```yaml
-nanit_nursery_rtmp: "rtmp://192.168.51.179:1935/local/<nursery_baby_uid>"
-nanit_second_room_rtmp: "rtmp://192.168.51.179:1935/local/<second_baby_uid>"
+nanit_benjamin_rtmp: "rtmp://192.168.51.179:1935/local/<benjamin_baby_uid>"
+nanit_travel_rtmp: "rtmp://192.168.51.179:1935/local/<travel_baby_uid>"
 ```
 
 `configuration.yaml` references these via `!secret` — the full RTMP
@@ -365,8 +365,8 @@ interpolate `!secret` inside strings.
 
 | Entity | URL |
 |--------|-----|
-| `camera.nanit_nursery` | `rtmp://192.168.51.179:1935/local/<nursery_baby_uid>` |
-| `camera.nanit_second_room` | `rtmp://192.168.51.179:1935/local/<second_room_baby_uid>` |
+| `camera.nanit_benjamin` | `rtmp://192.168.51.179:1935/local/<benjamin_baby_uid>` |
+| `camera.nanit_travel` | `rtmp://192.168.51.179:1935/local/<travel_baby_uid>` |
 
 ### Known limitations
 

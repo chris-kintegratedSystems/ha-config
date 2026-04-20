@@ -170,9 +170,8 @@ browser_mod:
 
 camera:
   - platform: ffmpeg
-    name: Nanit Nursery
-    input: !secret nanit_nursery_rtmp
-  # TODO(chris): confirm second-room name, rename entity + dashboard refs
+    name: Nanit Benjamin
+    input: !secret nanit_benjamin_rtmp
   - platform: ffmpeg
-    name: Nanit Second Room
-    input: !secret nanit_second_room_rtmp
+    name: Nanit Travel
+    input: !secret nanit_travel_rtmp
