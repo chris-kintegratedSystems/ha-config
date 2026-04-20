@@ -1,1 +1,47 @@
-{}
+scene_good_morning:
+  alias: "Scene: Good Morning"
+  icon: mdi:white-balance-sunny
+  sequence:
+    - service: scene.turn_on
+      target:
+        entity_id: scene.morning_mode
+
+scene_good_night:
+  alias: "Scene: Good Night"
+  icon: mdi:weather-night
+  sequence:
+    - service: scene.turn_on
+      target:
+        entity_id: scene.night_mode
+
+scene_away_mode:
+  alias: "Scene: Away Mode"
+  icon: mdi:home-export-outline
+  sequence:
+    - service: scene.turn_on
+      target:
+        entity_id: scene.chill_mode
+
+scene_welcome_home:
+  alias: "Scene: Welcome Home"
+  icon: mdi:home-import-outline
+  sequence:
+    - service: scene.turn_on
+      target:
+        entity_id: scene.day_mode
+
+scene_movie_time:
+  alias: "Scene: Movie Time"
+  icon: mdi:movie-open-outline
+  sequence:
+    - service: scene.turn_on
+      target:
+        entity_id: scene.chill_mode
+
+scene_dinner_time:
+  alias: "Scene: Dinner Time"
+  icon: mdi:food-fork-drink
+  sequence:
+    - service: scene.turn_on
+      target:
+        entity_id: scene.dinner_time
