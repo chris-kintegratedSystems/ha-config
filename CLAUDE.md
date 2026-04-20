@@ -159,7 +159,7 @@ light.bens_light
 ### 📹 Cameras
 | Name | Entity ID | Notes |
 |------|-----------|-------|
-| Doorbell | `camera.doorbell` | Vivint DBC300. Use `camera_view: auto` (not live). DBC300 has RTSP at `rtsp://user:PASS@IP:PORT/Video-00` but needs go2rtc to work in HA |
+| Doorbell | `camera.doorbell` | Vivint DBC300. Use `camera_view: auto` (not live). DBC300 RTSP is fronted by the go2rtc container (stream name `doorbell`). |
 | Izzy Camera | `camera.izzy_camera` | Nest camera. Use `camera_view: auto`. Rate-limit prone. |
 | Living Room | `camera.living_room_camera` | Nest camera. Use `camera_view: auto`. |
 | Nanit Benjamin | `camera.nanit_benjamin` | Nanit baby monitor via local RTMP restream. ffmpeg platform. See "Nanit integration" below. |
@@ -168,7 +168,12 @@ light.bens_light
 
 **Camera rules:**
 - Always use `camera_view: auto` in dashboard cards to avoid rate-limiting
-- go2rtc NOT currently set up — on backlog
+- go2rtc runs as a standalone container on the Pi (`alexxit/go2rtc:latest`,
+  host networking, config at `/home/cooper5389/go2rtc/config/go2rtc.yaml`,
+  API `:1984`, RTSP `:8554`, WebRTC `:8555`). Currently only the `doorbell`
+  stream is configured. Nest and Nanit cameras are NOT in go2rtc — they
+  flow through their native HA integrations. Adding them + wiring
+  `custom:webrtc-camera` for real two-way audio is a future scope.
 - Nest cameras: WebRTC/RTSP warnings are a Google API limitation, not fixable
 - Do NOT open camera dashboard on multiple devices simultaneously
 
@@ -246,7 +251,7 @@ kiosk_mode:
 |-------|--------|-------|
 | Node 25 Z-Wave | Open | One-way communication failure — 0 return pings |
 | Garage TriSensor packet drops | Monitor | ~50% RX drop rate — consider Z-Wave repeater |
-| Doorbell live stream | Backlog | go2rtc not set up; using snapshot mode for now |
+| Doorbell two-way audio | Backlog | go2rtc container running with doorbell stream, but `custom:webrtc-camera` HACS card not installed and Vivint DBC300 backchannel support unverified |
 | Duplicate `logger:` in configuration.yaml | Fix needed | Lines 11 and 85 — YAML only uses last one |
 | `exclude` option deprecated at line 113 | Minor | In `recorder:` or `history:` config |
 | Benjamin's TV Chromecast removed | Done | Deleted device to stop log spam |
