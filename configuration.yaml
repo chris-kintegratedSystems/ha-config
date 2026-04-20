@@ -152,3 +152,26 @@ logbook:
       - sensor.*_last_seen  # add this line too
       
 browser_mod:
+
+# ─── CAMERAS ─────────────────────────────────────────────────────────────────
+# Nanit baby monitor streams via the seangreenhalgh/nanit RTMP restream
+# container running on the same Pi (docker-compose at
+# C:\Projects\kintegrated\nanit\docker-compose.yaml → deployed to
+# /home/cooper5389/nanit/ on the Pi).
+#
+# Baby UIDs come from the container log after the first authenticated run
+# and are stored in secrets.yaml (gitignored). See secrets.yaml.example.
+#
+# Known limitation (2026-04-20): motion events are NOT exposed by this
+# integration — the fork publishes motion/sound/crying via MQTT auto-
+# discovery, but Chris's HA stack has no MQTT broker. Until a broker is
+# added, these cameras cannot participate in the Home-page motion-
+# triggered camera zone.
+
+camera:
+  - platform: ffmpeg
+    name: Nanit Benjamin
+    input: !secret nanit_benjamin_rtmp
+  - platform: ffmpeg
+    name: Nanit Travel
+    input: !secret nanit_travel_rtmp

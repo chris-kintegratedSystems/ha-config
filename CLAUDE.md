@@ -162,6 +162,8 @@ light.bens_light
 | Doorbell | `camera.doorbell` | Vivint DBC300. Use `camera_view: auto` (not live). DBC300 has RTSP at `rtsp://user:PASS@IP:PORT/Video-00` but needs go2rtc to work in HA |
 | Izzy Camera | `camera.izzy_camera` | Nest camera. Use `camera_view: auto`. Rate-limit prone. |
 | Living Room | `camera.living_room_camera` | Nest camera. Use `camera_view: auto`. |
+| Nanit Benjamin | `camera.nanit_benjamin` | Nanit baby monitor via local RTMP restream. ffmpeg platform. See "Nanit integration" below. |
+| Nanit Travel | `camera.nanit_travel` | Portable Nanit unit. Same restream container. |
 | Doorbell Motion | `binary_sensor.doorbell_motion` | |
 
 **Camera rules:**
@@ -189,6 +191,17 @@ light.bens_light
 ---
 
 ## 📱 Dashboards
+
+### Mobile + Tablet Dashboards — managed in `ha-dashboard` repo
+Storage-mode dashboards `dashboard-mobilev1` and `dashboard-tabletv1`
+live as JSON in the `ha-dashboard` sibling repo and deploy to
+`/config/.storage/lovelace.dashboard_mobilev1` and
+`/config/.storage/lovelace.dashboard_tabletv1` (no `.json` extension,
+`root:root` 644, requires `sudo docker restart homeassistant` after
+copy). See `C:\Projects\kintegrated\projects\ha-dashboard\CLAUDE.md`
+→ "Critical Patterns → dashboard target path". Do NOT deploy these
+JSONs to `/config/www/` — that is a dead letter for dashboard
+configs; HA only reads dashboard Lovelace configs from `.storage/`.
 
 ### Main Dashboard (`lovelace.yaml`)
 - **File:** `/home/cooper5389/homeassistant/config/lovelace.yaml`
@@ -299,6 +312,90 @@ After every deploy, verify these on real hardware:
 - Tab S9 via Fully Kiosk hard refresh
 - iPhone via HA Companion App hard refresh
 - Check day AND night mode on both devices
+
+---
+
+## 🍼 Nanit Integration
+
+Nanit cameras stream into HA via a local RTMP restream container
+(`scgreenhalgh/home_assistant_nanit` fork, pinned to `v2.2.1`). The
+container authenticates against Nanit cloud once, then mirrors each
+baby's feed over RTMP on the Pi so HA's `ffmpeg` camera platform can
+consume it without hitting Nanit's API for every view.
+
+### Docker container
+
+| Field | Value |
+|-------|-------|
+| Image | `seangreenhalgh/nanit:v2.2.1` |
+| Compose source | `C:\Projects\kintegrated\nanit\docker-compose.yaml` (local); `/home/cooper5389/nanit/docker-compose.yaml` (Pi) |
+| Container name | `nanit` |
+| Port | `1935/tcp` (RTMP) |
+| Volume | `nanit_data:/data` — persists `session.json` refresh token |
+| Restart policy | `unless-stopped` |
+| Env — `NANIT_RTMP_ADDR` | `192.168.51.179:1935` |
+| Env — `NANIT_RTMP_ALLOWED_PRESETS` | `private` (RFC1918 whitelist) |
+| Env — `NANIT_MQTT_ENABLED` | `false` (see limitation below) |
+
+### Auth flow (one-time, interactive)
+
+```bash
+docker run -it -v nanit_data:/data \
+  --entrypoint=/app/scripts/init-nanit.sh \
+  seangreenhalgh/nanit:v2.2.1
+```
+
+Prompts for Nanit email + password + emailed 2FA code and writes
+`session.json` into the `nanit_data` volume. After this, `docker
+compose up -d` runs the main container without further interaction.
+Refresh tokens rotate automatically; do NOT re-run `init-nanit.sh`
+unless the session is invalidated (e.g., password change, forced
+logout on Nanit's side).
+
+### Baby UIDs
+
+Baby UIDs print to the container log on first authenticated run and
+never change for a given camera:
+
+```bash
+docker logs nanit | grep -i 'baby_uid'
+```
+
+Copy each UID into the live `secrets.yaml` under:
+
+```yaml
+nanit_benjamin_rtmp: "rtmp://192.168.51.179:1935/local/<benjamin_baby_uid>"
+nanit_travel_rtmp: "rtmp://192.168.51.179:1935/local/<travel_baby_uid>"
+```
+
+`configuration.yaml` references these via `!secret` — the full RTMP
+URL is the secret value, not just the UID, because HA YAML does not
+interpolate `!secret` inside strings.
+
+### Stream URLs
+
+| Entity | URL |
+|--------|-----|
+| `camera.nanit_benjamin` | `rtmp://192.168.51.179:1935/local/<benjamin_baby_uid>` |
+| `camera.nanit_travel` | `rtmp://192.168.51.179:1935/local/<travel_baby_uid>` |
+
+### Known limitations
+
+- **Motion events not exposed.** The fork publishes motion, sound,
+  cry, standing, and temperature via MQTT auto-discovery, but HA on
+  this Pi has no MQTT broker (mosquitto) configured as of
+  2026-04-20. Until a broker is added and `NANIT_MQTT_ENABLED=true`
+  in the compose file, Nanit cameras cannot participate in the Home
+  dashboard's motion-triggered camera zone. Enabling this is a
+  separate phase (add mosquitto container → enable MQTT env vars
+  → flip conditional-visibility cards in `dashboard_mobilev1.json`
+  home section to reference `binary_sensor.nanit_*_motion`).
+- **Audio is not supported.** The RTMP restream mirrors video only.
+  Two-way talk/listen (which Nanit's first-party app offers) is not
+  available through this integration.
+- **Single-subscriber preference.** Nanit's local stream is optimized
+  for one viewer at a time; opening the feed on multiple devices
+  simultaneously can trigger stream failover to the cloud source.
 
 ---
 
