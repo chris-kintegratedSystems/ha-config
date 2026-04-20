@@ -192,6 +192,17 @@ light.bens_light
 
 ## 📱 Dashboards
 
+### Mobile + Tablet Dashboards — managed in `ha-dashboard` repo
+Storage-mode dashboards `dashboard-mobilev1` and `dashboard-tabletv1`
+live as JSON in the `ha-dashboard` sibling repo and deploy to
+`/config/.storage/lovelace.dashboard_mobilev1` and
+`/config/.storage/lovelace.dashboard_tabletv1` (no `.json` extension,
+`root:root` 644, requires `sudo docker restart homeassistant` after
+copy). See `C:\Projects\kintegrated\projects\ha-dashboard\CLAUDE.md`
+→ "Critical Patterns → dashboard target path". Do NOT deploy these
+JSONs to `/config/www/` — that is a dead letter for dashboard
+configs; HA only reads dashboard Lovelace configs from `.storage/`.
+
 ### Main Dashboard (`lovelace.yaml`)
 - **File:** `/home/cooper5389/homeassistant/config/lovelace.yaml`
 - **Card standard:** `custom:button-card` with `state:` blocks for dynamic color/icon — this is the confirmed working approach
