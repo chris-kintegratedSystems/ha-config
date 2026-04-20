@@ -4,6 +4,8 @@ default_config:
 # Load frontend themes from the themes folder
 frontend:
   themes: !include_dir_merge_named themes
+  extra_module_url:
+    - /local/mobile_v1/kis-nav.js?v=17
 
 automation: !include automations.yaml
 script: !include scripts.yaml
@@ -28,7 +30,28 @@ template:
           {% else %}
             {{ (distance('person.claire', 'zone.home') * 0.621371) | round(1) }} mi away
           {% endif %}
-          
+
+  # Sticky motion mirrors — hold "on" for 2 min after raw motion clears
+  # so the Home dashboard camera zone doesn't flicker closed immediately.
+  - binary_sensor:
+      - name: "Doorbell Motion Sticky"
+        unique_id: doorbell_motion_sticky
+        device_class: motion
+        state: "{{ is_state('binary_sensor.doorbell_motion', 'on') }}"
+        delay_off: "00:02:00"
+
+      - name: "Living Room Camera Motion Sticky"
+        unique_id: living_room_camera_motion_sticky
+        device_class: motion
+        state: "{{ is_state('binary_sensor.living_room_camera_motion', 'on') }}"
+        delay_off: "00:02:00"
+
+      - name: "Izzy Camera Motion Sticky"
+        unique_id: izzy_camera_motion_sticky
+        device_class: motion
+        state: "{{ is_state('binary_sensor.izzy_camera_motion', 'on') }}"
+        delay_off: "00:02:00"
+
 # ─── RECORDER ────────────────────────────────────────────────────────────────
 # Controls what gets written to your database (home-assistant_v2.db)
 # Goal: keep history meaningful, exclude noisy/useless entities

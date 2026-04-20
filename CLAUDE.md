@@ -254,6 +254,54 @@ kiosk_mode:
 
 ---
 
+## 🚨 Critical Patterns
+
+### configuration.yaml — extra_module_url preservation
+Every deploy that touches configuration.yaml MUST verify that the
+frontend.extra_module_url block is present and includes kis-nav.js
+with the current cache-bust version:
+
+```yaml
+frontend:
+  themes: !include_dir_merge_named themes
+  extra_module_url:
+    - /local/mobile_v1/kis-nav.js?v=<CURRENT_VERSION>
+```
+
+If this block is missing, kis-nav.js will not load and the header bar,
+bottom nav bar, notification badges, and mini-player will all disappear.
+This is invisible to Playwright QA since anonymous sessions never load
+custom JS resources.
+
+**Root cause:** Phase 4 deploy (April 2026) — ha-config branch modified
+configuration.yaml without the extra_module_url block. SCP to Pi
+overwrote the working config and stripped the kis-nav.js loader.
+
+**Prevention checklist for any configuration.yaml change:**
+1. Before SCP: grep for `extra_module_url` in the local file
+2. Before SCP: grep for `kis-nav` in the local file
+3. If either is missing, STOP — do not deploy
+4. After docker restart: verify on real device that header + nav appear
+
+### Playwright limitations
+Playwright QA (qa-screenshot.js) runs anonymous Chromium sessions that
+do NOT load kis-nav.js, HA themes, or authenticated entity states.
+
+Playwright CANNOT verify:
+- Header bar (time, weather, presence, alarm)
+- Bottom nav bar (6 tabs, badges)
+- Mini-player
+- Notification badge counts
+- Day/night theme rendering
+- Entity-driven conditional cards
+
+After every deploy, verify these on real hardware:
+- Tab S9 via Fully Kiosk hard refresh
+- iPhone via HA Companion App hard refresh
+- Check day AND night mode on both devices
+
+---
+
 ## 🔄 Common Claude Code Tasks
 
 ```bash
