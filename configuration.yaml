@@ -5,7 +5,7 @@ default_config:
 frontend:
   themes: !include_dir_merge_named themes
   extra_module_url:
-    - /local/mobile_v1/kis-nav.js?v=25
+    - /local/mobile_v1/kis-nav.js?v=26
 
 automation: !include automations.yaml
 script: !include scripts.yaml
@@ -83,20 +83,24 @@ template:
             {{ (ns.active | sort(attribute=1, reverse=true))[0][0] }}
           {% endif %}
 
-  # Sticky motion mirrors — hold "on" for 2 min after raw motion clears
-  # so the Home dashboard camera zone doesn't flicker closed immediately.
+  # Sticky motion mirrors — hold "on" for 5 s after raw motion clears so
+  # the Home dashboard camera takeover doesn't flicker during a brief
+  # pause in motion but also drops quickly so the "most recent wins"
+  # logic can hand off between cameras in near-real time. Previous 2-min
+  # hold kept the takeover pinned too long.
+  #
   # Doorbell is a Vivint binary_sensor (steady state) → delay_off pattern.
   - binary_sensor:
       - name: "Doorbell Motion Sticky"
         unique_id: doorbell_motion_sticky
         device_class: motion
         state: "{{ is_state('binary_sensor.doorbell_motion', 'on') }}"
-        delay_off: "00:02:00"
+        delay_off: "00:00:05"
 
   # Nest cameras expose motion as event entities (one-shot timestamp state
   # change on each pulse), not binary_sensors — so the delay_off pattern
   # above cannot read them. Use trigger-based template binary_sensors that
-  # latch "on" when the event fires and auto_off 2 min later.
+  # latch "on" when the event fires and auto_off 5 s later.
   - trigger:
       - platform: state
         entity_id: event.living_room_camera_motion
@@ -105,7 +109,7 @@ template:
         unique_id: living_room_camera_motion_sticky
         device_class: motion
         state: "on"
-        auto_off: "00:02:00"
+        auto_off: "00:00:05"
 
   - trigger:
       - platform: state
@@ -115,7 +119,7 @@ template:
         unique_id: izzy_camera_motion_sticky
         device_class: motion
         state: "on"
-        auto_off: "00:02:00"
+        auto_off: "00:00:05"
 
 # ─── RECORDER ────────────────────────────────────────────────────────────────
 # Controls what gets written to your database (home-assistant_v2.db)
