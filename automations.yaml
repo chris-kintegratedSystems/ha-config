@@ -432,3 +432,36 @@
     target:
       entity_id: light.bens_light
   mode: single
+- id: theme_mode_sync
+  alias: Theme Mode - Sync HA Frontend Theme
+  description: >-
+    Keeps HA's native theme in sync with input_select.theme_mode. Auto follows
+    sun.sun (kis-day above horizon, kis-dark below). Day/Night force the
+    respective theme. kis-nav.js applies its own data-kis-day attribute from
+    the same source on every tick.
+  triggers:
+  - trigger: state
+    entity_id: input_select.theme_mode
+  - trigger: state
+    entity_id: sun.sun
+    to: below_horizon
+  - trigger: state
+    entity_id: sun.sun
+    to: above_horizon
+  - trigger: homeassistant
+    event: start
+  actions:
+  - variables:
+      mode: "{{ states('input_select.theme_mode') }}"
+      sun_below: "{{ is_state('sun.sun', 'below_horizon') }}"
+      target_theme: >-
+        {% if mode == 'Day' %}kis-day
+        {% elif mode == 'Night' %}kis-dark
+        {% elif sun_below %}kis-dark
+        {% else %}kis-day
+        {% endif %}
+  - action: frontend.set_theme
+    data:
+      name: "{{ target_theme | trim }}"
+  mode: single
+  max_exceeded: silent

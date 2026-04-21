@@ -5,11 +5,23 @@ default_config:
 frontend:
   themes: !include_dir_merge_named themes
   extra_module_url:
-    - /local/mobile_v1/kis-nav.js?v=17
+    - /local/mobile_v1/kis-nav.js?v=18
 
 automation: !include automations.yaml
 script: !include scripts.yaml
 scene: !include scenes.yaml
+
+# Day/night theme mode — read by kis-nav.js and by the theme_mode_sync
+# automation (see automations.yaml). Auto = follow sun.sun.
+input_select:
+  theme_mode:
+    name: Theme Mode
+    options:
+      - Auto
+      - Day
+      - Night
+    initial: Auto
+    icon: mdi:theme-light-dark
 
 template:
   - sensor:
