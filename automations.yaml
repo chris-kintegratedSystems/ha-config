@@ -465,3 +465,159 @@
       name: "{{ target_theme | trim }}"
   mode: single
   max_exceeded: silent
+- id: priority_camera_reset_on_start
+  alias: Priority Camera - Reset on HA Start
+  description: >-
+    Clear any stale active_priority_camera value and cancel any running
+    linger timer when HA boots, so the carousel shows until real motion
+    fires. Needed because input_text values survive restarts but sticky
+    sensors do not, so a stale "doorbell" value can outlive the motion
+    that caused it.
+  triggers:
+  - trigger: homeassistant
+    event: start
+  actions:
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.active_priority_camera
+    data:
+      value: none
+  - action: timer.cancel
+    target:
+      entity_id: timer.priority_camera_linger
+  mode: single
+- id: priority_camera_sticky_on
+  alias: Priority Camera - Sticky ON Handler
+  description: >-
+    Hold-until-clear logic. When any motion sticky turns ON, take over
+    the priority zone only if the current camera's sticky is already
+    OFF (or no camera is active). While the current camera is still
+    active, new motion from other cameras is ignored — this prevents
+    flapping mid-event. Any takeover cancels a pending linger timer so
+    the zone does not return to the carousel behind us.
+  mode: queued
+  max: 10
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.doorbell_motion_sticky
+    - binary_sensor.living_room_camera_motion_sticky
+    - binary_sensor.izzy_camera_motion_sticky
+    from: 'off'
+    to: 'on'
+  actions:
+  - variables:
+      cam_map:
+        binary_sensor.doorbell_motion_sticky: doorbell
+        binary_sensor.living_room_camera_motion_sticky: living_room
+        binary_sensor.izzy_camera_motion_sticky: izzy
+      sticky_map:
+        doorbell: binary_sensor.doorbell_motion_sticky
+        living_room: binary_sensor.living_room_camera_motion_sticky
+        izzy: binary_sensor.izzy_camera_motion_sticky
+      new_cam: "{{ cam_map[trigger.entity_id] }}"
+      current: "{{ states('input_text.active_priority_camera') }}"
+      current_sticky_state: >-
+        {% if current in sticky_map %}
+          {{ states(sticky_map[current]) }}
+        {% else %}
+          off
+        {% endif %}
+  - choose:
+    - conditions:
+      - "{{ current not in ['doorbell', 'living_room', 'izzy'] or current_sticky_state != 'on' }}"
+      sequence:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.active_priority_camera
+        data:
+          value: "{{ new_cam }}"
+      - action: timer.cancel
+        target:
+          entity_id: timer.priority_camera_linger
+- id: priority_camera_sticky_off
+  alias: Priority Camera - Sticky OFF Handler
+  description: >-
+    When a motion sticky turns OFF and it matches the currently active
+    priority camera: pick the oldest remaining still-active camera (if
+    any) so the longest-running event wins the handoff, otherwise start
+    the 30-second linger timer. The linger keeps the last feed on
+    screen so the user has time to glance at what triggered motion,
+    even if the cause has already left.
+  mode: queued
+  max: 10
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.doorbell_motion_sticky
+    - binary_sensor.living_room_camera_motion_sticky
+    - binary_sensor.izzy_camera_motion_sticky
+    from: 'on'
+    to: 'off'
+  actions:
+  - variables:
+      cam_map:
+        binary_sensor.doorbell_motion_sticky: doorbell
+        binary_sensor.living_room_camera_motion_sticky: living_room
+        binary_sensor.izzy_camera_motion_sticky: izzy
+      cleared_cam: "{{ cam_map[trigger.entity_id] }}"
+      current: "{{ states('input_text.active_priority_camera') }}"
+  - condition: template
+    value_template: "{{ cleared_cam == current }}"
+  - variables:
+      others: >-
+        {% set entities = [
+          'binary_sensor.doorbell_motion_sticky',
+          'binary_sensor.living_room_camera_motion_sticky',
+          'binary_sensor.izzy_camera_motion_sticky'
+        ] %}
+        {% set ns = namespace(active=[]) %}
+        {% for e in entities %}
+          {% if e != trigger.entity_id and is_state(e, 'on') %}
+            {% set ns.active = ns.active + [(cam_map[e], as_timestamp(states[e].last_changed))] %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.active | sort(attribute=1) | list }}
+      next_cam: >-
+        {% if others | length > 0 %}
+          {{ others[0][0] }}
+        {% else %}
+          none
+        {% endif %}
+  - choose:
+    - conditions:
+      - "{{ next_cam in ['doorbell', 'living_room', 'izzy'] }}"
+      sequence:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.active_priority_camera
+        data:
+          value: "{{ next_cam }}"
+      - action: timer.cancel
+        target:
+          entity_id: timer.priority_camera_linger
+    default:
+    - action: timer.start
+      target:
+        entity_id: timer.priority_camera_linger
+      data:
+        duration: "00:00:30"
+- id: priority_camera_linger_finished
+  alias: Priority Camera - Linger Timer Finished
+  description: >-
+    The 30-second linger expired with no new motion. Return the
+    priority zone to "none" so the dashboard carousel takes back over.
+    If motion had fired during the linger, sticky_on would have
+    canceled this timer and it would never have reached timer.finished.
+  triggers:
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: timer.priority_camera_linger
+  actions:
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.active_priority_camera
+    data:
+      value: none
+  mode: single

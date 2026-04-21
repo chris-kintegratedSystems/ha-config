@@ -37,6 +37,28 @@ input_number:
     initial: 0
     icon: mdi:view-carousel
 
+# Hold-until-clear state for the Home priority camera zone. Values:
+# doorbell / living_room / izzy / none. Written by the priority_camera_*
+# automations (see automations.yaml). sensor.priority_camera reads this
+# value directly — kis-nav.js + dashboard conditional cards key off the
+# sensor, NOT this input_text.
+input_text:
+  active_priority_camera:
+    name: Active Priority Camera
+    initial: none
+    min: 0
+    max: 20
+    icon: mdi:cctv
+
+# 30-second linger countdown after all motion clears. When this timer
+# finishes, priority_camera_linger_finished sets active_priority_camera
+# back to "none" (carousel returns). New motion before it expires
+# cancels the timer via the sticky_on/sticky_off automations.
+timer:
+  priority_camera_linger:
+    name: Priority Camera Linger
+    duration: "00:00:30"
+
 template:
   - sensor:
       - name: "Chris Distance from Home"
@@ -57,37 +79,33 @@ template:
             {{ (distance('person.claire', 'zone.home') * 0.621371) | round(1) }} mi away
           {% endif %}
 
-      # Most-recently-triggered active sticky motion sensor. Drives the
-      # mobilev1 priority-display zone camera takeover — exactly one
-      # picture-entity is rendered at a time (doorbell / living_room /
-      # izzy), or "none" when every sticky is off (carousel shows).
+      # Drives the mobilev1 priority-display zone camera takeover. Exactly
+      # one picture-entity is rendered at a time (doorbell / living_room /
+      # izzy), or "none" when the carousel should show.
+      #
+      # Reads input_text.active_priority_camera which is managed by the
+      # priority_camera_sticky_on / priority_camera_sticky_off /
+      # priority_camera_linger_finished automations implementing
+      # hold-until-clear + 30s linger. The in/out alphabet
+      # (doorbell / living_room / izzy / none) is the contract that
+      # kis-nav.js PRIORITY_CAMERA_MAP and the dashboard conditional
+      # cards depend on — do not change.
       - name: "Priority Camera"
         unique_id: priority_camera
         state: >
-          {% set d = states.binary_sensor.doorbell_motion_sticky %}
-          {% set l = states.binary_sensor.living_room_camera_motion_sticky %}
-          {% set i = states.binary_sensor.izzy_camera_motion_sticky %}
-          {% set ns = namespace(active=[]) %}
-          {% if d and d.state == 'on' %}
-            {% set ns.active = ns.active + [('doorbell', d.last_changed)] %}
-          {% endif %}
-          {% if l and l.state == 'on' %}
-            {% set ns.active = ns.active + [('living_room', l.last_changed)] %}
-          {% endif %}
-          {% if i and i.state == 'on' %}
-            {% set ns.active = ns.active + [('izzy', i.last_changed)] %}
-          {% endif %}
-          {% if ns.active | length == 0 %}
-            none
+          {% set v = states('input_text.active_priority_camera') %}
+          {% if v in ['doorbell', 'living_room', 'izzy'] %}
+            {{ v }}
           {% else %}
-            {{ (ns.active | sort(attribute=1, reverse=true))[0][0] }}
+            none
           {% endif %}
 
-  # Sticky motion mirrors — hold "on" for 5 s after raw motion clears so
-  # the Home dashboard camera takeover doesn't flicker during a brief
-  # pause in motion but also drops quickly so the "most recent wins"
-  # logic can hand off between cameras in near-real time. Previous 2-min
-  # hold kept the takeover pinned too long.
+  # Sticky motion mirrors — hold "on" for 30 s after raw motion clears.
+  # Nest cameras fire motion as discrete event pulses with 5–15 s gaps
+  # between pulses during continuous motion; a 5 s sticky clears between
+  # pulses and flickers the Home camera takeover. 30 s bridges the
+  # pulse gaps and, combined with hold-until-clear in automations.yaml,
+  # produces stable takeovers.
   #
   # Doorbell is a Vivint binary_sensor (steady state) → delay_off pattern.
   - binary_sensor:
@@ -95,12 +113,12 @@ template:
         unique_id: doorbell_motion_sticky
         device_class: motion
         state: "{{ is_state('binary_sensor.doorbell_motion', 'on') }}"
-        delay_off: "00:00:05"
+        delay_off: "00:00:30"
 
   # Nest cameras expose motion as event entities (one-shot timestamp state
   # change on each pulse), not binary_sensors — so the delay_off pattern
   # above cannot read them. Use trigger-based template binary_sensors that
-  # latch "on" when the event fires and auto_off 5 s later.
+  # latch "on" when the event fires and auto_off 30 s later.
   - trigger:
       - platform: state
         entity_id: event.living_room_camera_motion
@@ -109,7 +127,7 @@ template:
         unique_id: living_room_camera_motion_sticky
         device_class: motion
         state: "on"
-        auto_off: "00:00:05"
+        auto_off: "00:00:30"
 
   - trigger:
       - platform: state
@@ -119,7 +137,7 @@ template:
         unique_id: izzy_camera_motion_sticky
         device_class: motion
         state: "on"
-        auto_off: "00:00:05"
+        auto_off: "00:00:30"
 
 # ─── RECORDER ────────────────────────────────────────────────────────────────
 # Controls what gets written to your database (home-assistant_v2.db)
