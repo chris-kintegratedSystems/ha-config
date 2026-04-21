@@ -5,7 +5,7 @@ default_config:
 frontend:
   themes: !include_dir_merge_named themes
   extra_module_url:
-    - /local/mobile_v1/kis-nav.js?v=24
+    - /local/mobile_v1/kis-nav.js?v=25
 
 automation: !include automations.yaml
 script: !include scripts.yaml
@@ -22,6 +22,20 @@ input_select:
       - Night
     initial: Auto
     icon: mdi:theme-light-dark
+
+# Tracks the currently visible slide index of the priority-display zone's
+# simple-swipe-card on mobilev1. kis-nav.js pushes this value via
+# input_number.set_value whenever the active-slide class lands on a new
+# slide element. The Lovelace section_label template above the carousel
+# reads this number to show "VEHICLES" (0) or "WEATHER" (1).
+input_number:
+  priority_slide_index:
+    name: Priority Slide Index
+    min: 0
+    max: 1
+    step: 1
+    initial: 0
+    icon: mdi:view-carousel
 
 template:
   - sensor:
@@ -41,6 +55,32 @@ template:
             Home
           {% else %}
             {{ (distance('person.claire', 'zone.home') * 0.621371) | round(1) }} mi away
+          {% endif %}
+
+      # Most-recently-triggered active sticky motion sensor. Drives the
+      # mobilev1 priority-display zone camera takeover — exactly one
+      # picture-entity is rendered at a time (doorbell / living_room /
+      # izzy), or "none" when every sticky is off (carousel shows).
+      - name: "Priority Camera"
+        unique_id: priority_camera
+        state: >
+          {% set d = states.binary_sensor.doorbell_motion_sticky %}
+          {% set l = states.binary_sensor.living_room_camera_motion_sticky %}
+          {% set i = states.binary_sensor.izzy_camera_motion_sticky %}
+          {% set ns = namespace(active=[]) %}
+          {% if d and d.state == 'on' %}
+            {% set ns.active = ns.active + [('doorbell', d.last_changed)] %}
+          {% endif %}
+          {% if l and l.state == 'on' %}
+            {% set ns.active = ns.active + [('living_room', l.last_changed)] %}
+          {% endif %}
+          {% if i and i.state == 'on' %}
+            {% set ns.active = ns.active + [('izzy', i.last_changed)] %}
+          {% endif %}
+          {% if ns.active | length == 0 %}
+            none
+          {% else %}
+            {{ (ns.active | sort(attribute=1, reverse=true))[0][0] }}
           {% endif %}
 
   # Sticky motion mirrors — hold "on" for 2 min after raw motion clears
