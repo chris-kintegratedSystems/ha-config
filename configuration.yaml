@@ -23,6 +23,62 @@ input_select:
     initial: Auto
     icon: mdi:theme-light-dark
 
+# Phase 5A — per-room expand/collapse state for the Lights page room
+# cards. Each room's header chevron in the dashboard toggles its helper;
+# a type:conditional card reveals the per-light rows when the helper is on.
+input_boolean:
+  lights_kitchen_expanded:
+    name: Lights Kitchen Expanded
+    icon: mdi:silverware-fork-knife
+    initial: on
+  lights_living_room_expanded:
+    name: Lights Living Room Expanded
+    icon: mdi:sofa
+    initial: off
+  lights_outdoor_expanded:
+    name: Lights Outdoor Expanded
+    icon: mdi:tree
+    initial: off
+  lights_benjamin_expanded:
+    name: Lights Benjamin Expanded
+    icon: mdi:baby-face-outline
+    initial: off
+
+# Phase 5A — room-level light groups used by the Lights page room cards.
+# Master toggle and X/Y count template read these. Note: setting
+# brightness on a group flattens all members to that exact value (HA
+# does not scale proportionally).
+light:
+  - platform: group
+    name: Kitchen All
+    unique_id: kitchen_all
+    entities:
+      - light.countertop_lights
+      - light.kitchen_chandelier
+      - light.kitchen_ceilings_lights
+      - light.kitchen_island_light
+  - platform: group
+    name: Living Room All
+    unique_id: living_room_all
+    entities:
+      - light.living_room_ceiling
+      - light.living_room_lamp_2
+  - platform: group
+    name: Outdoor All
+    unique_id: outdoor_all
+    entities:
+      - light.front_porch_lights
+      - light.front_walkway_lights
+      - light.upper_outdoor_lights
+      - light.left_outdoor_patio_lights
+      - light.center_outdoor_patio
+  - platform: group
+    name: Benjamin Room All
+    unique_id: benjamin_room_all
+    entities:
+      - light.benjamins_hatch_light
+      - light.bens_light
+
 template:
   - sensor:
       - name: "Chris Distance from Home"
