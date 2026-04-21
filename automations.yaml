@@ -489,12 +489,25 @@
 - id: priority_camera_sticky_on
   alias: Priority Camera - Sticky ON Handler
   description: >-
-    Hold-until-clear logic. When any motion sticky turns ON, take over
-    the priority zone only if the current camera's sticky is already
-    OFF (or no camera is active). While the current camera is still
-    active, new motion from other cameras is ignored — this prevents
-    flapping mid-event. Any takeover cancels a pending linger timer so
-    the zone does not return to the carousel behind us.
+    Priority-tiered hold-until-clear. When a motion sticky turns ON,
+    decide if the new camera should take over the priority zone:
+
+      Tier 1 (URGENT): doorbell — security, always interrupts.
+      Tier 2 (NORMAL): living_room, izzy — interior, hold-until-clear
+                       among themselves.
+
+    Takeover rules:
+      * No current owner -> take over.
+      * Incoming is a HIGHER tier (lower number) than current -> OVERRIDE
+        immediately, even if current's sticky is still ON. (Doorbell
+        interrupts any interior camera.)
+      * Incoming is SAME tier as current AND current's sticky has cleared
+        -> take over (same-tier hold-until-clear, current released).
+      * Incoming is SAME tier and current's sticky still ON -> hold.
+      * Incoming is LOWER tier than current -> hold (never demote).
+
+    Any takeover cancels a pending linger timer so the zone does not
+    return to the carousel behind us.
   mode: queued
   max: 10
   triggers:
@@ -515,17 +528,38 @@
         doorbell: binary_sensor.doorbell_motion_sticky
         living_room: binary_sensor.living_room_camera_motion_sticky
         izzy: binary_sensor.izzy_camera_motion_sticky
+      tier_map:
+        doorbell: 1
+        living_room: 2
+        izzy: 2
       new_cam: "{{ cam_map[trigger.entity_id] }}"
+      new_tier: "{{ tier_map[cam_map[trigger.entity_id]] }}"
       current: "{{ states('input_text.active_priority_camera') }}"
+      current_tier: >-
+        {% if current in tier_map %}
+          {{ tier_map[current] }}
+        {% else %}
+          99
+        {% endif %}
       current_sticky_state: >-
         {% if current in sticky_map %}
           {{ states(sticky_map[current]) }}
         {% else %}
           off
         {% endif %}
+      should_take_over: >-
+        {% if current not in ['doorbell', 'living_room', 'izzy'] %}
+          true
+        {% elif (new_tier | int) < (current_tier | int) %}
+          true
+        {% elif (new_tier | int) == (current_tier | int) and current_sticky_state != 'on' %}
+          true
+        {% else %}
+          false
+        {% endif %}
   - choose:
     - conditions:
-      - "{{ current not in ['doorbell', 'living_room', 'izzy'] or current_sticky_state != 'on' }}"
+      - "{{ should_take_over | trim == 'true' }}"
       sequence:
       - action: input_text.set_value
         target:
@@ -539,11 +573,18 @@
   alias: Priority Camera - Sticky OFF Handler
   description: >-
     When a motion sticky turns OFF and it matches the currently active
-    priority camera: pick the oldest remaining still-active camera (if
-    any) so the longest-running event wins the handoff, otherwise start
-    the 30-second linger timer. The linger keeps the last feed on
-    screen so the user has time to glance at what triggered motion,
-    even if the cause has already left.
+    priority camera, pick a replacement:
+
+      1. Any still-active Tier 1 (doorbell) camera wins first — security
+         trumps interior even on handoff.
+      2. Otherwise the still-active Tier 2 camera with the OLDEST
+         last_changed wins (longest continuous motion).
+      3. Nothing else active -> start the 30-second linger timer so the
+         last feed stays on screen before the carousel returns.
+
+    Ignored if the OFF event is for a non-current camera (the current
+    owner is still showing its feed; its sticky just happened to tick
+    past a pulse gap unrelated to the zone).
   mode: queued
   max: 10
   triggers:
@@ -560,39 +601,51 @@
         binary_sensor.doorbell_motion_sticky: doorbell
         binary_sensor.living_room_camera_motion_sticky: living_room
         binary_sensor.izzy_camera_motion_sticky: izzy
+      tier_map:
+        doorbell: 1
+        living_room: 2
+        izzy: 2
       cleared_cam: "{{ cam_map[trigger.entity_id] }}"
       current: "{{ states('input_text.active_priority_camera') }}"
   - condition: template
     value_template: "{{ cleared_cam == current }}"
   - variables:
-      others: >-
+      next_cam: >-
         {% set entities = [
           'binary_sensor.doorbell_motion_sticky',
           'binary_sensor.living_room_camera_motion_sticky',
           'binary_sensor.izzy_camera_motion_sticky'
         ] %}
-        {% set ns = namespace(active=[]) %}
+        {% set ns = namespace(t1=[], t2=[]) %}
         {% for e in entities %}
           {% if e != trigger.entity_id and is_state(e, 'on') %}
-            {% set ns.active = ns.active + [(cam_map[e], as_timestamp(states[e].last_changed))] %}
+            {% set cam = cam_map[e] %}
+            {% set ts = as_timestamp(states[e].last_changed) %}
+            {% if tier_map[cam] == 1 %}
+              {% set ns.t1 = ns.t1 + [(cam, ts)] %}
+            {% else %}
+              {% set ns.t2 = ns.t2 + [(cam, ts)] %}
+            {% endif %}
           {% endif %}
         {% endfor %}
-        {{ ns.active | sort(attribute=1) | list }}
-      next_cam: >-
-        {% if others | length > 0 %}
-          {{ others[0][0] }}
+        {% set t1_sorted = ns.t1 | sort(attribute=1) %}
+        {% set t2_sorted = ns.t2 | sort(attribute=1) %}
+        {% if t1_sorted | length > 0 %}
+          {{ t1_sorted[0][0] }}
+        {% elif t2_sorted | length > 0 %}
+          {{ t2_sorted[0][0] }}
         {% else %}
           none
         {% endif %}
   - choose:
     - conditions:
-      - "{{ next_cam in ['doorbell', 'living_room', 'izzy'] }}"
+      - "{{ next_cam | trim in ['doorbell', 'living_room', 'izzy'] }}"
       sequence:
       - action: input_text.set_value
         target:
           entity_id: input_text.active_priority_camera
         data:
-          value: "{{ next_cam }}"
+          value: "{{ next_cam | trim }}"
       - action: timer.cancel
         target:
           entity_id: timer.priority_camera_linger
