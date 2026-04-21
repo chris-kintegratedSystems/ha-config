@@ -159,7 +159,7 @@ light.bens_light
 ### 📹 Cameras
 | Name | Entity ID | Notes |
 |------|-----------|-------|
-| Doorbell | `camera.doorbell` | Vivint DBC300. Use `camera_view: auto` (not live). DBC300 has RTSP at `rtsp://user:PASS@IP:PORT/Video-00` but needs go2rtc to work in HA |
+| Doorbell | `camera.doorbell` | Vivint DBC300. Use `camera_view: auto` (not live). DBC300 RTSP is fronted by the go2rtc container (stream name `doorbell`). |
 | Izzy Camera | `camera.izzy_camera` | Nest camera. Use `camera_view: auto`. Rate-limit prone. |
 | Living Room | `camera.living_room_camera` | Nest camera. Use `camera_view: auto`. |
 | Nanit Benjamin | `camera.nanit_benjamin` | Nanit baby monitor via local RTMP restream. ffmpeg platform. See "Nanit integration" below. |
@@ -168,7 +168,18 @@ light.bens_light
 
 **Camera rules:**
 - Always use `camera_view: auto` in dashboard cards to avoid rate-limiting
-- go2rtc NOT currently set up — on backlog
+- go2rtc runs as a standalone container on the Pi:
+  - Image: `alexxit/go2rtc:latest` (running version **v1.9.14** as of
+    2026-04-20, linux/arm64)
+  - Host networking mode
+  - Config: `/home/cooper5389/go2rtc/config/go2rtc.yaml`
+  - Ports: API `:1984`, RTSP `:8554`, WebRTC `:8555/tcp`
+  - Only the `doorbell` stream is configured (Vivint DBC300 RTSP, plus a
+    `camera.doorbell` variant for ffmpeg-sourced audio). Nest and Nanit
+    cameras are **not** in go2rtc — they flow through their native HA
+    integrations (Nest: google_nest_sdm, Nanit: ffmpeg platform against
+    the local indiefan/nanit RTMP restream). Adding them + wiring
+    `custom:webrtc-camera` for real two-way audio is a future scope.
 - Nest cameras: WebRTC/RTSP warnings are a Google API limitation, not fixable
 - Do NOT open camera dashboard on multiple devices simultaneously
 
@@ -246,7 +257,7 @@ kiosk_mode:
 |-------|--------|-------|
 | Node 25 Z-Wave | Open | One-way communication failure — 0 return pings |
 | Garage TriSensor packet drops | Monitor | ~50% RX drop rate — consider Z-Wave repeater |
-| Doorbell live stream | Backlog | go2rtc not set up; using snapshot mode for now |
+| Doorbell two-way audio | Backlog | go2rtc container running with doorbell stream, but `custom:webrtc-camera` HACS card not installed and Vivint DBC300 backchannel support unverified |
 | Duplicate `logger:` in configuration.yaml | Fix needed | Lines 11 and 85 — YAML only uses last one |
 | `exclude` option deprecated at line 113 | Minor | In `recorder:` or `history:` config |
 | Benjamin's TV Chromecast removed | Done | Deleted device to stop log spam |
@@ -318,8 +329,8 @@ After every deploy, verify these on real hardware:
 ## 🍼 Nanit Integration
 
 Nanit cameras stream into HA via a local RTMP restream container
-(`scgreenhalgh/home_assistant_nanit` fork, pinned to `v2.2.1`). The
-container authenticates against Nanit cloud once, then mirrors each
+(`indiefan/nanit`). The container authenticates against Nanit cloud
+using `NANIT_EMAIL` + `NANIT_PASSWORD` env vars, then mirrors each
 baby's feed over RTMP on the Pi so HA's `ffmpeg` camera platform can
 consume it without hitting Nanit's API for every view.
 
@@ -327,30 +338,33 @@ consume it without hitting Nanit's API for every view.
 
 | Field | Value |
 |-------|-------|
-| Image | `seangreenhalgh/nanit:v2.2.1` |
+| Image | `indiefan/nanit` (unpinned — last pulled 2026-04-20) |
 | Compose source | `C:\Projects\kintegrated\nanit\docker-compose.yaml` (local); `/home/cooper5389/nanit/docker-compose.yaml` (Pi) |
 | Container name | `nanit` |
 | Port | `1935/tcp` (RTMP) |
-| Volume | `nanit_data:/data` — persists `session.json` refresh token |
+| Volume | **bind mount** `/home/cooper5389/nanit/data:/data` — persists session/refresh state |
 | Restart policy | `unless-stopped` |
 | Env — `NANIT_RTMP_ADDR` | `192.168.51.179:1935` |
-| Env — `NANIT_RTMP_ALLOWED_PRESETS` | `private` (RFC1918 whitelist) |
-| Env — `NANIT_MQTT_ENABLED` | `false` (see limitation below) |
+| Env — `NANIT_EMAIL` | set in compose file (account: `chris.kuprycz@gmail.com`) |
+| Env — `NANIT_PASSWORD` | **currently plain-text in compose file — move to a .env / secrets pattern** (flagged 2026-04-20) |
+| Env — `NANIT_LOG_LEVEL` | `trace` |
 
-### Auth flow (one-time, interactive)
+> ⚠️ **Security follow-up:** `NANIT_PASSWORD` is in plain text inside
+> `/home/cooper5389/nanit/docker-compose.yaml`. Convert to a
+> docker-compose `.env` file or a `secrets:` mount before the next
+> touch on this container. Do NOT commit the password to the
+> `ha-config` repo — the `nanit/docker-compose.yaml` lives in the
+> `kintegrated/nanit` repo tree; use `env_file:` referencing a
+> `.env` that is `.gitignore`d.
 
-```bash
-docker run -it -v nanit_data:/data \
-  --entrypoint=/app/scripts/init-nanit.sh \
-  seangreenhalgh/nanit:v2.2.1
-```
+### Auth flow
 
-Prompts for Nanit email + password + emailed 2FA code and writes
-`session.json` into the `nanit_data` volume. After this, `docker
-compose up -d` runs the main container without further interaction.
-Refresh tokens rotate automatically; do NOT re-run `init-nanit.sh`
-unless the session is invalidated (e.g., password change, forced
-logout on Nanit's side).
+The indiefan image authenticates from env vars on every container
+start. On first launch (or after a password change / forced logout),
+Nanit emails a 2FA code; the container consumes it automatically if
+the Nanit API returns the expected challenge shape. Session state
+persists in the bind-mounted `/home/cooper5389/nanit/data` directory,
+so normal restarts reuse the refresh token and do not re-prompt.
 
 ### Baby UIDs
 
@@ -361,16 +375,16 @@ never change for a given camera:
 docker logs nanit | grep -i 'baby_uid'
 ```
 
-Copy each UID into the live `secrets.yaml` under:
+Known UIDs (stored in the live `secrets.yaml` — the full RTMP URL
+is the secret, not just the UID, because HA YAML does not
+interpolate `!secret` inside strings):
 
 ```yaml
 nanit_benjamin_rtmp: "rtmp://192.168.51.179:1935/local/<benjamin_baby_uid>"
 nanit_travel_rtmp: "rtmp://192.168.51.179:1935/local/<travel_baby_uid>"
 ```
 
-`configuration.yaml` references these via `!secret` — the full RTMP
-URL is the secret value, not just the UID, because HA YAML does not
-interpolate `!secret` inside strings.
+`configuration.yaml` references these via `!secret`.
 
 ### Stream URLs
 
