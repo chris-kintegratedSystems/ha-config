@@ -45,6 +45,7 @@ template:
 
   # Sticky motion mirrors — hold "on" for 2 min after raw motion clears
   # so the Home dashboard camera zone doesn't flicker closed immediately.
+  # Doorbell is a Vivint binary_sensor (steady state) → delay_off pattern.
   - binary_sensor:
       - name: "Doorbell Motion Sticky"
         unique_id: doorbell_motion_sticky
@@ -52,17 +53,29 @@ template:
         state: "{{ is_state('binary_sensor.doorbell_motion', 'on') }}"
         delay_off: "00:02:00"
 
+  # Nest cameras expose motion as event entities (one-shot timestamp state
+  # change on each pulse), not binary_sensors — so the delay_off pattern
+  # above cannot read them. Use trigger-based template binary_sensors that
+  # latch "on" when the event fires and auto_off 2 min later.
+  - trigger:
+      - platform: state
+        entity_id: event.living_room_camera_motion
+    binary_sensor:
       - name: "Living Room Camera Motion Sticky"
         unique_id: living_room_camera_motion_sticky
         device_class: motion
-        state: "{{ is_state('binary_sensor.living_room_camera_motion', 'on') }}"
-        delay_off: "00:02:00"
+        state: "on"
+        auto_off: "00:02:00"
 
+  - trigger:
+      - platform: state
+        entity_id: event.izzy_camera_motion
+    binary_sensor:
       - name: "Izzy Camera Motion Sticky"
         unique_id: izzy_camera_motion_sticky
         device_class: motion
-        state: "{{ is_state('binary_sensor.izzy_camera_motion', 'on') }}"
-        delay_off: "00:02:00"
+        state: "on"
+        auto_off: "00:02:00"
 
 # ─── RECORDER ────────────────────────────────────────────────────────────────
 # Controls what gets written to your database (home-assistant_v2.db)
