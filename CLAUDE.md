@@ -146,7 +146,7 @@ light.kitchen_island_light
 light.living_room_ceiling
 light.living_room_lamp_2
 light.garage_light
-light.patio_string_lights
+light.outdoor_switch_2  # friendly name: "Patio String Lights"
 light.front_porch_lights
 light.front_walkway_lights
 light.upper_outdoor_lights
