@@ -419,7 +419,7 @@
   description: Turns off Ben's light if no motion detected for 5 minutes
   triggers:
   - trigger: state
-    entity_id: binary_sensor.living_room_camera_motion
+    entity_id: binary_sensor.nest_cam_2_motion
     to: 'off'
     for:
       minutes: 5
