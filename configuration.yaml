@@ -5,7 +5,7 @@ default_config:
 frontend:
   themes: !include_dir_merge_named themes
   extra_module_url:
-    - /local/mobile_v1/kis-nav.js?v=35
+    - /local/mobile_v1/kis-nav.js?v=37
 
 automation: !include automations.yaml
 script: !include scripts.yaml
@@ -32,7 +32,7 @@ input_number:
   priority_slide_index:
     name: Priority Slide Index
     min: 0
-    max: 1
+    max: 4
     step: 1
     initial: 0
     icon: mdi:view-carousel
