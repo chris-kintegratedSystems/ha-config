@@ -59,6 +59,23 @@ timer:
     name: Priority Camera Linger
     duration: "00:00:30"
 
+# Freshness trackers for interior cameras. Each helper records when the
+# named camera's motion sticky last transitioned on -> off. The
+# priority_camera_sticky_on automation reads these to decide if an
+# incoming interior motion event is "fresh" (>= 60 s gap since last
+# clear) or "stale" (recent re-trigger / ongoing activity). Fresh
+# events can displace a stale current owner; stale events cannot.
+# Doorbell is Tier 1 override and does not participate in freshness.
+input_datetime:
+  last_motion_clear_living_room:
+    name: Last Motion Clear - Living Room
+    has_date: true
+    has_time: true
+  last_motion_clear_izzy:
+    name: Last Motion Clear - Izzy
+    has_date: true
+    has_time: true
+
 template:
   - sensor:
       - name: "Chris Distance from Home"

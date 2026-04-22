@@ -489,22 +489,33 @@
 - id: priority_camera_sticky_on
   alias: Priority Camera - Sticky ON Handler
   description: >-
-    Priority-tiered hold-until-clear. When a motion sticky turns ON,
-    decide if the new camera should take over the priority zone:
+    Priority-tiered takeover with freshness-based same-tier arbitration.
+    When a motion sticky turns ON, decide if the new camera should take
+    over the priority zone.
 
       Tier 1 (URGENT): doorbell — security, always interrupts.
-      Tier 2 (NORMAL): living_room, izzy — interior, hold-until-clear
-                       among themselves.
+      Tier 2 (NORMAL): living_room, izzy — interior cameras, arbitrated
+                       by freshness instead of strict hold-until-clear
+                       so a fresh room event can displace a room with
+                       ongoing stale motion (kids playing continuously
+                       must not block a new event elsewhere).
+
+    FRESH = incoming sticky's last OFF was >= 60 s ago (quiet room).
+    STALE = currently-active camera's sticky has been ON for >= 60 s
+            (ongoing activity).
 
     Takeover rules:
       * No current owner -> take over.
-      * Incoming is a HIGHER tier (lower number) than current -> OVERRIDE
-        immediately, even if current's sticky is still ON. (Doorbell
-        interrupts any interior camera.)
-      * Incoming is SAME tier as current AND current's sticky has cleared
-        -> take over (same-tier hold-until-clear, current released).
-      * Incoming is SAME tier and current's sticky still ON -> hold.
+      * Incoming is HIGHER tier than current (doorbell vs interior) ->
+        OVERRIDE immediately regardless of freshness.
       * Incoming is LOWER tier than current -> hold (never demote).
+      * Same tier, current's sticky already cleared -> take over.
+      * Same tier, both sticky-on:
+          - incoming fresh, current stale  -> switch (fresh beats stale)
+          - both fresh                     -> switch (most-recent wins)
+          - incoming stale, current fresh  -> hold current
+          - both stale                     -> hold current (no ping-pong
+            between two busy rooms)
 
     Any takeover cancels a pending linger timer so the zone does not
     return to the carousel behind us.
@@ -528,6 +539,9 @@
         doorbell: binary_sensor.doorbell_motion_sticky
         living_room: binary_sensor.living_room_camera_motion_sticky
         izzy: binary_sensor.izzy_camera_motion_sticky
+      clear_map:
+        living_room: input_datetime.last_motion_clear_living_room
+        izzy: input_datetime.last_motion_clear_izzy
       tier_map:
         doorbell: 1
         living_room: 2
@@ -547,12 +561,25 @@
         {% else %}
           off
         {% endif %}
+      now_ts: "{{ as_timestamp(now()) }}"
+      incoming_last_clear_ts: >-
+        {% if new_cam in clear_map %}
+          {{ state_attr(clear_map[new_cam], 'timestamp') | float(0) }}
+        {% else %}
+          0
+        {% endif %}
+      incoming_is_fresh: >-
+        {{ (now_ts | float) - (incoming_last_clear_ts | float) >= 60 }}
       should_take_over: >-
         {% if current not in ['doorbell', 'living_room', 'izzy'] %}
           true
         {% elif (new_tier | int) < (current_tier | int) %}
           true
-        {% elif (new_tier | int) == (current_tier | int) and current_sticky_state != 'on' %}
+        {% elif (new_tier | int) > (current_tier | int) %}
+          false
+        {% elif current_sticky_state != 'on' %}
+          true
+        {% elif incoming_is_fresh | trim == 'True' %}
           true
         {% else %}
           false
@@ -572,19 +599,29 @@
 - id: priority_camera_sticky_off
   alias: Priority Camera - Sticky OFF Handler
   description: >-
-    When a motion sticky turns OFF and it matches the currently active
-    priority camera, pick a replacement:
+    A motion sticky just cleared. Two responsibilities:
 
-      1. Any still-active Tier 1 (doorbell) camera wins first — security
-         trumps interior even on handoff.
-      2. Otherwise the still-active Tier 2 camera with the OLDEST
-         last_changed wins (longest continuous motion).
-      3. Nothing else active -> start the 30-second linger timer so the
-         last feed stays on screen before the carousel returns.
+      A. Record the clear timestamp for interior cameras so the
+         sticky_on freshness check sees the correct quiet-period gap
+         the next time this camera fires. (Doorbell is Tier 1 override
+         and does not participate in freshness, so no timestamp.)
+      B. If the cleared camera is the currently-active priority owner,
+         pick a replacement:
+           1. Any still-active Tier 1 (doorbell) camera wins first —
+              security trumps interior even on handoff.
+           2. Otherwise pick the still-active Tier 2 camera that is
+              FRESHEST (most-recent last_changed = turned on most
+              recently). Matches the user's "fresh event beats ongoing"
+              preference and is the inverse of the old "oldest wins"
+              rule that biased toward whichever room had been active
+              longest (staleness).
+           3. Nothing else active -> start the 30-second linger timer
+              so the last feed stays on screen before the carousel
+              returns.
 
-    Ignored if the OFF event is for a non-current camera (the current
-    owner is still showing its feed; its sticky just happened to tick
-    past a pulse gap unrelated to the zone).
+    Step B is skipped when the OFF event is for a non-current camera
+    (current owner's feed keeps showing; its own sticky just happened
+    to tick past a pulse gap unrelated to the zone). Step A still runs.
   mode: queued
   max: 10
   triggers:
@@ -601,12 +638,29 @@
         binary_sensor.doorbell_motion_sticky: doorbell
         binary_sensor.living_room_camera_motion_sticky: living_room
         binary_sensor.izzy_camera_motion_sticky: izzy
+      clear_map:
+        living_room: input_datetime.last_motion_clear_living_room
+        izzy: input_datetime.last_motion_clear_izzy
       tier_map:
         doorbell: 1
         living_room: 2
         izzy: 2
       cleared_cam: "{{ cam_map[trigger.entity_id] }}"
       current: "{{ states('input_text.active_priority_camera') }}"
+  # Step A: record the clear timestamp for interior cameras. Runs for
+  # every OFF event regardless of whether this camera is the current
+  # priority owner.
+  - choose:
+    - conditions:
+      - "{{ cleared_cam in ['living_room', 'izzy'] }}"
+      sequence:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: "{{ clear_map[cleared_cam] }}"
+        data:
+          timestamp: "{{ as_timestamp(now()) }}"
+  # Step B: only proceed with replacement selection if the cleared
+  # camera is the currently active priority owner.
   - condition: template
     value_template: "{{ cleared_cam == current }}"
   - variables:
@@ -628,8 +682,10 @@
             {% endif %}
           {% endif %}
         {% endfor %}
-        {% set t1_sorted = ns.t1 | sort(attribute=1) %}
-        {% set t2_sorted = ns.t2 | sort(attribute=1) %}
+        {# Tier 1 wins first; Tier 2 fallback picks FRESHEST (newest
+           last_changed = sticky turned on most recently). #}
+        {% set t1_sorted = ns.t1 | sort(attribute=1, reverse=True) %}
+        {% set t2_sorted = ns.t2 | sort(attribute=1, reverse=True) %}
         {% if t1_sorted | length > 0 %}
           {{ t1_sorted[0][0] }}
         {% elif t2_sorted | length > 0 %}
