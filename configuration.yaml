@@ -5,7 +5,7 @@ default_config:
 frontend:
   themes: !include_dir_merge_named themes
   extra_module_url:
-    - /local/mobile_v1/kis-nav.js?v=39
+    - /local/mobile_v1/kis-nav.js?v=41
 
 automation: !include automations.yaml
 script: !include scripts.yaml
@@ -63,15 +63,15 @@ template:
       - name: "Priority Camera"
         unique_id: priority_camera
         state: >
-          {% if is_state('binary_sensor.doorbell_motion_sticky', 'on') %}
+          {% if is_state('binary_sensor.doorbell_person_occupancy', 'on') or is_state('binary_sensor.doorbell_motion_sticky', 'on') %}
             doorbell
-          {% elif is_state('binary_sensor.nest_cam_2_motion_sticky', 'on') %}
+          {% elif is_state('binary_sensor.nest_cam_2_person_occupancy', 'on') or is_state('binary_sensor.nest_cam_2_motion_sticky', 'on') %}
             living_room
-          {% elif is_state('binary_sensor.nest_cam_1_motion_sticky', 'on') %}
+          {% elif is_state('binary_sensor.nest_cam_1_person_occupancy', 'on') or is_state('binary_sensor.nest_cam_1_motion_sticky', 'on') %}
             izzy
-          {% elif is_state('binary_sensor.nanit_benjamin_motion_sticky', 'on') %}
+          {% elif is_state('binary_sensor.nanit_benjamin_person_occupancy', 'on') or is_state('binary_sensor.nanit_benjamin_motion_sticky', 'on') %}
             nanit_benjamin
-          {% elif is_state('binary_sensor.nanit_travel_motion_sticky', 'on') %}
+          {% elif is_state('binary_sensor.nanit_travel_person_occupancy', 'on') or is_state('binary_sensor.nanit_travel_motion_sticky', 'on') %}
             nanit_travel
           {% else %}
             none

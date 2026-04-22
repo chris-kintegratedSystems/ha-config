@@ -20,6 +20,9 @@ go2rtc:
     nanit_travel:
       - "rtmp://192.168.51.179:1935/local/NANIT_TRAVEL_UID"
 
+birdseye:
+  enabled: false
+
 detectors:
   cpu:
     type: cpu
@@ -68,7 +71,7 @@ cameras:
     detect:
       width: 640
       height: 480
-      fps: 5
+      fps: 2
 
   nest_cam_2:
     ffmpeg:
@@ -79,7 +82,7 @@ cameras:
     detect:
       width: 640
       height: 480
-      fps: 5
+      fps: 2
 
   nanit_benjamin:
     ffmpeg:
@@ -88,9 +91,9 @@ cameras:
           roles:
             - detect
     detect:
-      width: 640
-      height: 480
-      fps: 5
+      enabled: false
+    motion:
+      enabled: false
 
   nanit_travel:
     ffmpeg:
@@ -99,6 +102,6 @@ cameras:
           roles:
             - detect
     detect:
-      width: 640
-      height: 480
-      fps: 5
+      enabled: false
+    motion:
+      enabled: false
