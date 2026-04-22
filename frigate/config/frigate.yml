@@ -1,18 +1,22 @@
+# NOTE: go2rtc does NOT support Frigate's {ENV_VAR} substitution.
+# Credentials must be hardcoded in the deployed config.yml on the Pi.
+# See .env.example for the list of values to fill in.
+
 mqtt:
   enabled: false
 
 go2rtc:
   streams:
     doorbell:
-      - "rtsp://{FRIGATE_VIVINT_RTSP_USER}:{FRIGATE_VIVINT_RTSP_PASS}@192.168.51.106:8554/Video-188"
+      - "rtsp://USER:PASS@192.168.51.106:8554/Video-188"
     nest_cam_1:
-      - "nest:///enterprises/{FRIGATE_NEST_PROJECT_ID}/devices/{FRIGATE_NEST_CAM1_DEVICE_ID}?client_id={FRIGATE_NEST_CLIENT_ID}&client_secret={FRIGATE_NEST_CLIENT_SECRET}&refresh_token={FRIGATE_NEST_REFRESH_TOKEN}"
+      - "nest:?client_id=CLIENT_ID&client_secret=CLIENT_SECRET&refresh_token=REFRESH_TOKEN&project_id=PROJECT_ID&device_id=DEVICE_ID_1"
     nest_cam_2:
-      - "nest:///enterprises/{FRIGATE_NEST_PROJECT_ID}/devices/{FRIGATE_NEST_CAM2_DEVICE_ID}?client_id={FRIGATE_NEST_CLIENT_ID}&client_secret={FRIGATE_NEST_CLIENT_SECRET}&refresh_token={FRIGATE_NEST_REFRESH_TOKEN}"
+      - "nest:?client_id=CLIENT_ID&client_secret=CLIENT_SECRET&refresh_token=REFRESH_TOKEN&project_id=PROJECT_ID&device_id=DEVICE_ID_2"
     nanit_benjamin:
-      - "rtmp://192.168.51.179:1935/local/{FRIGATE_NANIT_BENJAMIN_UID}"
+      - "rtmp://192.168.51.179:1935/local/NANIT_BENJAMIN_UID"
     nanit_travel:
-      - "rtmp://192.168.51.179:1935/local/{FRIGATE_NANIT_TRAVEL_UID}"
+      - "rtmp://192.168.51.179:1935/local/NANIT_TRAVEL_UID"
 
 detectors:
   cpu:
