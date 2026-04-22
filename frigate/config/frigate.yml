@@ -3,7 +3,9 @@
 # See .env.example for the list of values to fill in.
 
 mqtt:
-  enabled: false
+  enabled: true
+  host: localhost
+  port: 1883
 
 go2rtc:
   streams:

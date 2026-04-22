@@ -5,7 +5,7 @@ default_config:
 frontend:
   themes: !include_dir_merge_named themes
   extra_module_url:
-    - /local/mobile_v1/kis-nav.js?v=38
+    - /local/mobile_v1/kis-nav.js?v=39
 
 automation: !include automations.yaml
 script: !include scripts.yaml
@@ -58,26 +58,24 @@ template:
           {% endif %}
 
       # Drives the mobilev1 priority-display zone camera takeover.
-      # Simplified for Frigate migration: doorbell motion = "doorbell",
-      # otherwise "none". The alphabet (doorbell / none) is the contract
-      # kis-nav.js PRIORITY_CAMERA_MAP and dashboard conditionals use.
+      # Priority order: doorbell > living_room > izzy.
+      # Alphabet values match kis-nav.js PRIORITY_CAMERA_MAP keys.
       - name: "Priority Camera"
         unique_id: priority_camera
         state: >
           {% if is_state('binary_sensor.doorbell_motion_sticky', 'on') %}
             doorbell
+          {% elif is_state('binary_sensor.nest_cam_2_motion_sticky', 'on') %}
+            living_room
+          {% elif is_state('binary_sensor.nest_cam_1_motion_sticky', 'on') %}
+            izzy
           {% else %}
             none
           {% endif %}
 
   # Sticky motion mirrors — hold "on" for 30 s after raw motion clears.
-  # Nest cameras fire motion as discrete event pulses with 5–15 s gaps
-  # between pulses during continuous motion; a 5 s sticky clears between
-  # pulses and flickers the Home camera takeover. 30 s bridges the
-  # pulse gaps and, combined with hold-until-clear in automations.yaml,
-  # produces stable takeovers.
-  #
-  # Doorbell is a Vivint binary_sensor (steady state) → delay_off pattern.
+  # All cameras now use Frigate's binary_sensor.*_motion entities
+  # (object detection based). Uniform delay_off pattern for all.
   - binary_sensor:
       - name: "Doorbell Motion Sticky"
         unique_id: doorbell_motion_sticky
@@ -85,29 +83,17 @@ template:
         state: "{{ is_state('binary_sensor.doorbell_motion', 'on') }}"
         delay_off: "00:00:30"
 
-  # Nest cameras expose motion as event entities (one-shot timestamp state
-  # change on each pulse), not binary_sensors — so the delay_off pattern
-  # above cannot read them. Use trigger-based template binary_sensors that
-  # latch "on" when the event fires and auto_off 30 s later.
-  - trigger:
-      - platform: state
-        entity_id: event.nest_cam_2_motion
-    binary_sensor:
       - name: "Nest Cam 2 Motion Sticky"
         unique_id: nest_cam_2_motion_sticky
         device_class: motion
-        state: "on"
-        auto_off: "00:00:30"
+        state: "{{ is_state('binary_sensor.nest_cam_2_motion', 'on') }}"
+        delay_off: "00:00:30"
 
-  - trigger:
-      - platform: state
-        entity_id: event.nest_cam_1_motion
-    binary_sensor:
       - name: "Nest Cam 1 Motion Sticky"
         unique_id: nest_cam_1_motion_sticky
         device_class: motion
-        state: "on"
-        auto_off: "00:00:30"
+        state: "{{ is_state('binary_sensor.nest_cam_1_motion', 'on') }}"
+        delay_off: "00:00:30"
 
 # ─── RECORDER ────────────────────────────────────────────────────────────────
 # Controls what gets written to your database (home-assistant_v2.db)
@@ -163,7 +149,7 @@ logger:
 
   logs:
     # ── Silence known noisy components ───────────────────────────────────────
-    google_nest_sdm.event_media: error          # Suppress Nest camera media warnings
+    custom_components.frigate: warning           # Frigate integration logging
     homeassistant.components.sonos: error       # Already broken speaker - silence warnings
     homeassistant.components.recorder: error    # Suppress routine recorder messages
     homeassistant.components.websocket_api: error
@@ -211,24 +197,7 @@ logbook:
 browser_mod:
 
 # ─── CAMERAS ─────────────────────────────────────────────────────────────────
-# Nanit baby monitor streams via the seangreenhalgh/nanit RTMP restream
-# container running on the same Pi (docker-compose at
-# C:\Projects\kintegrated\nanit\docker-compose.yaml → deployed to
-# /home/cooper5389/nanit/ on the Pi).
-#
-# Baby UIDs come from the container log after the first authenticated run
-# and are stored in secrets.yaml (gitignored). See secrets.yaml.example.
-#
-# Known limitation (2026-04-20): motion events are NOT exposed by this
-# integration — the fork publishes motion/sound/crying via MQTT auto-
-# discovery, but Chris's HA stack has no MQTT broker. Until a broker is
-# added, these cameras cannot participate in the Home-page motion-
-# triggered camera zone.
-
-camera:
-  - platform: ffmpeg
-    name: Nanit Benjamin
-    input: !secret nanit_benjamin_rtmp
-  - platform: ffmpeg
-    name: Nanit Travel
-    input: !secret nanit_travel_rtmp
+# All 5 cameras (doorbell, nest_cam_1, nest_cam_2, nanit_benjamin,
+# nanit_travel) are now served by Frigate's embedded go2rtc.
+# The Frigate integration creates camera.* entities automatically.
+# No manual camera: platform entries needed.
