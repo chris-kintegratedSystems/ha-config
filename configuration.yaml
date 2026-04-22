@@ -58,7 +58,7 @@ template:
           {% endif %}
 
       # Drives the mobilev1 priority-display zone camera takeover.
-      # Priority order: doorbell > living_room > izzy.
+      # Priority order: doorbell > living_room > izzy > nanit_benjamin > nanit_travel.
       # Alphabet values match kis-nav.js PRIORITY_CAMERA_MAP keys.
       - name: "Priority Camera"
         unique_id: priority_camera
@@ -69,31 +69,48 @@ template:
             living_room
           {% elif is_state('binary_sensor.nest_cam_1_motion_sticky', 'on') %}
             izzy
+          {% elif is_state('binary_sensor.nanit_benjamin_motion_sticky', 'on') %}
+            nanit_benjamin
+          {% elif is_state('binary_sensor.nanit_travel_motion_sticky', 'on') %}
+            nanit_travel
           {% else %}
             none
           {% endif %}
 
-  # Sticky motion mirrors — hold "on" for 30 s after raw motion clears.
-  # All cameras now use Frigate's binary_sensor.*_motion entities
-  # (object detection based). Uniform delay_off pattern for all.
+  # Sticky person-occupancy mirrors — hold "on" for 5 s after Frigate
+  # stops detecting a person. Uses *_person_occupancy (AI object
+  # detection) instead of *_motion (raw pixel change) to avoid false
+  # triggers from trees, shadows, and wind.
   - binary_sensor:
       - name: "Doorbell Motion Sticky"
         unique_id: doorbell_motion_sticky
         device_class: motion
-        state: "{{ is_state('binary_sensor.doorbell_motion', 'on') }}"
-        delay_off: "00:00:30"
+        state: "{{ is_state('binary_sensor.doorbell_person_occupancy', 'on') }}"
+        delay_off: "00:00:05"
 
       - name: "Nest Cam 2 Motion Sticky"
         unique_id: nest_cam_2_motion_sticky
         device_class: motion
-        state: "{{ is_state('binary_sensor.nest_cam_2_motion', 'on') }}"
-        delay_off: "00:00:30"
+        state: "{{ is_state('binary_sensor.nest_cam_2_person_occupancy', 'on') }}"
+        delay_off: "00:00:05"
 
       - name: "Nest Cam 1 Motion Sticky"
         unique_id: nest_cam_1_motion_sticky
         device_class: motion
-        state: "{{ is_state('binary_sensor.nest_cam_1_motion', 'on') }}"
-        delay_off: "00:00:30"
+        state: "{{ is_state('binary_sensor.nest_cam_1_person_occupancy', 'on') }}"
+        delay_off: "00:00:05"
+
+      - name: "Nanit Benjamin Motion Sticky"
+        unique_id: nanit_benjamin_motion_sticky
+        device_class: motion
+        state: "{{ is_state('binary_sensor.nanit_benjamin_person_occupancy', 'on') }}"
+        delay_off: "00:00:05"
+
+      - name: "Nanit Travel Motion Sticky"
+        unique_id: nanit_travel_motion_sticky
+        device_class: motion
+        state: "{{ is_state('binary_sensor.nanit_travel_person_occupancy', 'on') }}"
+        delay_off: "00:00:05"
 
 # ─── RECORDER ────────────────────────────────────────────────────────────────
 # Controls what gets written to your database (home-assistant_v2.db)
