@@ -1,0 +1,102 @@
+# NOTE: go2rtc does NOT support Frigate's {ENV_VAR} substitution.
+# Credentials must be hardcoded in the deployed config.yml on the Pi.
+# See .env.example for the list of values to fill in.
+
+mqtt:
+  enabled: false
+
+go2rtc:
+  streams:
+    doorbell:
+      - "rtsp://USER:PASS@192.168.51.106:8554/Video-188"
+    nest_cam_1:
+      - "nest:?client_id=CLIENT_ID&client_secret=CLIENT_SECRET&refresh_token=REFRESH_TOKEN&project_id=PROJECT_ID&device_id=DEVICE_ID_1"
+    nest_cam_2:
+      - "nest:?client_id=CLIENT_ID&client_secret=CLIENT_SECRET&refresh_token=REFRESH_TOKEN&project_id=PROJECT_ID&device_id=DEVICE_ID_2"
+    nanit_benjamin:
+      - "rtmp://192.168.51.179:1935/local/NANIT_BENJAMIN_UID"
+    nanit_travel:
+      - "rtmp://192.168.51.179:1935/local/NANIT_TRAVEL_UID"
+
+detectors:
+  cpu:
+    type: cpu
+    num_threads: 3
+
+detect:
+  enabled: true
+  width: 640
+  height: 480
+  fps: 5
+
+objects:
+  track:
+    - person
+  filters:
+    person:
+      min_score: 0.5
+      threshold: 0.7
+
+record:
+  enabled: false
+
+snapshots:
+  enabled: true
+  retain:
+    default: 7
+
+cameras:
+  doorbell:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/doorbell
+          roles:
+            - detect
+    detect:
+      width: 640
+      height: 480
+      fps: 5
+
+  nest_cam_1:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/nest_cam_1
+          roles:
+            - detect
+    detect:
+      width: 640
+      height: 480
+      fps: 5
+
+  nest_cam_2:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/nest_cam_2
+          roles:
+            - detect
+    detect:
+      width: 640
+      height: 480
+      fps: 5
+
+  nanit_benjamin:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/nanit_benjamin
+          roles:
+            - detect
+    detect:
+      width: 640
+      height: 480
+      fps: 5
+
+  nanit_travel:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/nanit_travel
+          roles:
+            - detect
+    detect:
+      width: 640
+      height: 480
+      fps: 5

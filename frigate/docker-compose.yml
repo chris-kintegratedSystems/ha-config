@@ -1,0 +1,14 @@
+services:
+  frigate:
+    container_name: frigate
+    image: ghcr.io/blakeblackshear/frigate:stable
+    restart: unless-stopped
+    network_mode: host
+    shm_size: 256mb
+    env_file: .env
+    volumes:
+      - ./config:/config
+      - /home/cooper5389/frigate/media:/media/frigate
+      - /etc/localtime:/etc/localtime:ro
+    tmpfs:
+      - /tmp/cache:size=256m
