@@ -91,20 +91,20 @@ template:
   # latch "on" when the event fires and auto_off 30 s later.
   - trigger:
       - platform: state
-        entity_id: event.living_room_camera_motion
+        entity_id: event.nest_cam_2_motion
     binary_sensor:
-      - name: "Living Room Camera Motion Sticky"
-        unique_id: living_room_camera_motion_sticky
+      - name: "Nest Cam 2 Motion Sticky"
+        unique_id: nest_cam_2_motion_sticky
         device_class: motion
         state: "on"
         auto_off: "00:00:30"
 
   - trigger:
       - platform: state
-        entity_id: event.izzy_camera_motion
+        entity_id: event.nest_cam_1_motion
     binary_sensor:
-      - name: "Izzy Camera Motion Sticky"
-        unique_id: izzy_camera_motion_sticky
+      - name: "Nest Cam 1 Motion Sticky"
+        unique_id: nest_cam_1_motion_sticky
         device_class: motion
         state: "on"
         auto_off: "00:00:30"

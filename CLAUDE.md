@@ -160,8 +160,8 @@ light.bens_light
 | Name | Entity ID | Notes |
 |------|-----------|-------|
 | Doorbell | `camera.doorbell` | Vivint DBC300. Use `camera_view: auto` (not live). DBC300 RTSP is fronted by the go2rtc container (stream name `doorbell`). |
-| Izzy Camera | `camera.izzy_camera` | Nest camera. Use `camera_view: auto`. Rate-limit prone. |
-| Living Room | `camera.living_room_camera` | Nest camera. Use `camera_view: auto`. |
+| Nest Cam 1 | `camera.nest_cam_1` | Nest camera (formerly Izzy Camera). Use `camera_view: auto`. Rate-limit prone. |
+| Nest Cam 2 | `camera.nest_cam_2` | Nest camera (formerly Living Room). Use `camera_view: auto`. |
 | Nanit Benjamin | `camera.nanit_benjamin` | Nanit baby monitor via local RTMP restream. ffmpeg platform. See "Nanit integration" below. |
 | Nanit Travel | `camera.nanit_travel` | Portable Nanit unit. Same restream container. |
 | Doorbell Motion | `binary_sensor.doorbell_motion` | |
