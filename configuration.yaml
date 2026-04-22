@@ -37,45 +37,6 @@ input_number:
     initial: 0
     icon: mdi:view-carousel
 
-# Hold-until-clear state for the Home priority camera zone. Values:
-# doorbell / living_room / izzy / none. Written by the priority_camera_*
-# automations (see automations.yaml). sensor.priority_camera reads this
-# value directly — kis-nav.js + dashboard conditional cards key off the
-# sensor, NOT this input_text.
-input_text:
-  active_priority_camera:
-    name: Active Priority Camera
-    initial: none
-    min: 0
-    max: 20
-    icon: mdi:cctv
-
-# 30-second linger countdown after all motion clears. When this timer
-# finishes, priority_camera_linger_finished sets active_priority_camera
-# back to "none" (carousel returns). New motion before it expires
-# cancels the timer via the sticky_on/sticky_off automations.
-timer:
-  priority_camera_linger:
-    name: Priority Camera Linger
-    duration: "00:00:30"
-
-# Freshness trackers for interior cameras. Each helper records when the
-# named camera's motion sticky last transitioned on -> off. The
-# priority_camera_sticky_on automation reads these to decide if an
-# incoming interior motion event is "fresh" (>= 60 s gap since last
-# clear) or "stale" (recent re-trigger / ongoing activity). Fresh
-# events can displace a stale current owner; stale events cannot.
-# Doorbell is Tier 1 override and does not participate in freshness.
-input_datetime:
-  last_motion_clear_living_room:
-    name: Last Motion Clear - Living Room
-    has_date: true
-    has_time: true
-  last_motion_clear_izzy:
-    name: Last Motion Clear - Izzy
-    has_date: true
-    has_time: true
-
 template:
   - sensor:
       - name: "Chris Distance from Home"
@@ -96,23 +57,15 @@ template:
             {{ (distance('person.claire', 'zone.home') * 0.621371) | round(1) }} mi away
           {% endif %}
 
-      # Drives the mobilev1 priority-display zone camera takeover. Exactly
-      # one picture-entity is rendered at a time (doorbell / living_room /
-      # izzy), or "none" when the carousel should show.
-      #
-      # Reads input_text.active_priority_camera which is managed by the
-      # priority_camera_sticky_on / priority_camera_sticky_off /
-      # priority_camera_linger_finished automations implementing
-      # hold-until-clear + 30s linger. The in/out alphabet
-      # (doorbell / living_room / izzy / none) is the contract that
-      # kis-nav.js PRIORITY_CAMERA_MAP and the dashboard conditional
-      # cards depend on — do not change.
+      # Drives the mobilev1 priority-display zone camera takeover.
+      # Simplified for Frigate migration: doorbell motion = "doorbell",
+      # otherwise "none". The alphabet (doorbell / none) is the contract
+      # kis-nav.js PRIORITY_CAMERA_MAP and dashboard conditionals use.
       - name: "Priority Camera"
         unique_id: priority_camera
         state: >
-          {% set v = states('input_text.active_priority_camera') %}
-          {% if v in ['doorbell', 'living_room', 'izzy'] %}
-            {{ v }}
+          {% if is_state('binary_sensor.doorbell_motion_sticky', 'on') %}
+            doorbell
           {% else %}
             none
           {% endif %}
