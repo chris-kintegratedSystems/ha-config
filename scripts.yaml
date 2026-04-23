@@ -48,20 +48,72 @@ scene_dinner_time:
 
 scene_secure:
   alias: Secure
+  icon: mdi:shield-lock
   description: >-
-    Lock all doors and close all garages. Fire-and-forget; ratgdo's
-    safety sensors prevent garage closure if an obstacle is detected.
+    Lock any unlocked doors and close any open garages. Skips
+    entities that are jammed, unavailable, or already in target
+    state. Logs an info message for each skipped entity. ratgdo
+    safety sensors prevent garage closure if obstructed.
+  mode: single
   sequence:
     - parallel:
-        - service: lock.lock
-          target:
-            entity_id:
-              - lock.front_door_lock
-              - lock.back_door_lock
-              - lock.gemelli_door_lock
-        - service: cover.close_cover
-          target:
-            entity_id:
-              - cover.ratgdov25i_1746c3_door
-              - cover.ratgdov25i_1746b4_door
-  mode: single
+
+        # ─── Front Door ────────────────────────────────────────
+        - alias: Lock Front Door if unlocked
+          if:
+            - condition: state
+              entity_id: lock.front_door_lock
+              state: unlocked
+          then:
+            - action: lock.lock
+              target:
+                entity_id: lock.front_door_lock
+              continue_on_error: true
+
+        # ─── Back Door ────────────────────────────────────────
+        - alias: Lock Back Door if unlocked
+          if:
+            - condition: state
+              entity_id: lock.back_door_lock
+              state: unlocked
+          then:
+            - action: lock.lock
+              target:
+                entity_id: lock.back_door_lock
+              continue_on_error: true
+
+        # ─── Gemelli Door ─────────────────────────────────────
+        - alias: Lock Gemelli Door if unlocked
+          if:
+            - condition: state
+              entity_id: lock.gemelli_door_lock
+              state: unlocked
+          then:
+            - action: lock.lock
+              target:
+                entity_id: lock.gemelli_door_lock
+              continue_on_error: true
+
+        # ─── Left Garage ──────────────────────────────────────
+        - alias: Close Left Garage if open
+          if:
+            - condition: state
+              entity_id: cover.ratgdov25i_1746c3_door
+              state: open
+          then:
+            - action: cover.close_cover
+              target:
+                entity_id: cover.ratgdov25i_1746c3_door
+              continue_on_error: true
+
+        # ─── Right Garage ─────────────────────────────────────
+        - alias: Close Right Garage if open
+          if:
+            - condition: state
+              entity_id: cover.ratgdov25i_1746b4_door
+              state: open
+          then:
+            - action: cover.close_cover
+              target:
+                entity_id: cover.ratgdov25i_1746b4_door
+              continue_on_error: true
