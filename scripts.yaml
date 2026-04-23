@@ -45,3 +45,23 @@ scene_dinner_time:
     - service: scene.turn_on
       target:
         entity_id: scene.dinner_time
+
+scene_secure:
+  alias: Secure
+  description: >-
+    Lock all doors and close all garages. Fire-and-forget; ratgdo's
+    safety sensors prevent garage closure if an obstacle is detected.
+  sequence:
+    - parallel:
+        - service: lock.lock
+          target:
+            entity_id:
+              - lock.front_door_lock
+              - lock.back_door_lock
+              - lock.gemelli_door_lock
+        - service: cover.close_cover
+          target:
+            entity_id:
+              - cover.ratgdov25i_1746c3_door
+              - cover.ratgdov25i_1746b4_door
+  mode: single
