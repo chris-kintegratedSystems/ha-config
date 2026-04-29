@@ -209,7 +209,7 @@ live as JSON in the `ha-dashboard` sibling repo and deploy to
 `/config/.storage/lovelace.dashboard_mobilev1` and
 `/config/.storage/lovelace.dashboard_tabletv1` (no `.json` extension,
 `root:root` 644, requires `sudo docker restart homeassistant` after
-copy). See `C:\Projects\kintegrated\projects\ha-dashboard\CLAUDE.md`
+copy). See `C:\Projects\kintegrated\customers\ha-dashboard\CLAUDE.md`
 → "Critical Patterns → dashboard target path". Do NOT deploy these
 JSONs to `/config/www/` — that is a dead letter for dashboard
 configs; HA only reads dashboard Lovelace configs from `.storage/`.
