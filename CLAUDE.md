@@ -367,6 +367,39 @@ After every deploy, verify these on real hardware:
 
 ---
 
+## Deploy Discipline — Regression Diagnosis
+
+When a bug "appears" coinciding with a deploy, the default hypothesis
+is "the deploy caused it." Disproving that requires a positive
+mechanism for prior invisibility — not just "must have been hidden
+somehow."
+
+If the mechanism can't be verified, log the uncertainty in the PR
+description and proceed only if BOTH:
+
+(a) The fix is mechanically correct independent of cause — i.e. the
+    same change would be correct whether or not the deploy caused
+    the regression
+(b) The fix is on its own revertable PR — not folded into the deploy
+    that may have caused the regression
+
+Never merge with the explanation "pre-existing bug, no idea why it
+just appeared" treated as established fact. Either name a specific
+mechanism for prior invisibility (commit history, conditional
+visibility change, entity load order) or explicitly log the
+uncertainty.
+
+Example: Camera Follow Code deploy (PR #38, ha-dashboard) coincided
+with ButtonCardJSTemplateError on Gemelli lock card. Initial diagnosis
+was "pre-existing wrong entity ID." Chris confirmed he had not seen
+the error before. Mechanism for prior invisibility was not verified.
+Fix shipped on isolated PR #39 because (a) lock.gemelli_door_lock →
+lock.gemelli_door was mechanically correct regardless of cause, and
+(b) PR #39 was independent of PR #38 and revertable. PR description
+explicitly logged the unverified causal story.
+
+---
+
 ## 🍼 Nanit Integration
 
 Nanit cameras stream into HA via a local RTMP restream container
