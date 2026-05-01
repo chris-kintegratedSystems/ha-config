@@ -465,3 +465,247 @@
       name: "{{ target_theme | trim }}"
   mode: single
   max_exceeded: silent
+# ─── Camera Follow Code ─────────────────────────────────────────────────────
+# Stateful priority camera lock-and-hold logic.
+# Hold window: 60 seconds trailing after person_occupancy clears.
+# Doorbell is hard override; other 4 cameras can preempt each other
+# only when locked camera is currently quiet.
+# See PR for full behavior spec.
+
+- id: camera_follow_code_doorbell_lock
+  alias: "Camera Follow Code — Lock on doorbell trigger"
+  description: >-
+    Camera Follow Code — Doorbell hard override: whenever doorbell
+    detects a person, it becomes the locked camera regardless of
+    what was locked before.
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.doorbell_person_occupancy
+      to: "on"
+  conditions: []
+  actions:
+    - action: timer.cancel
+      target:
+        entity_id: timer.priority_camera_release
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.priority_camera_lock
+      data:
+        value: "doorbell"
+  mode: single
+
+- id: camera_follow_code_doorbell_timer
+  alias: "Camera Follow Code — Start doorbell timer on clear"
+  description: >-
+    Camera Follow Code — When doorbell person_occupancy clears while
+    doorbell is locked, start the 60-second trailing timer.
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.doorbell_person_occupancy
+      to: "off"
+  conditions:
+    - condition: state
+      entity_id: input_text.priority_camera_lock
+      state: "doorbell"
+  actions:
+    - action: timer.start
+      target:
+        entity_id: timer.priority_camera_release
+      data:
+        duration: "00:01:00"
+  mode: single
+
+- id: camera_follow_code_initial_lock
+  alias: "Camera Follow Code — Lock on non-doorbell trigger (nothing locked)"
+  description: >-
+    Camera Follow Code — When nothing is locked and a non-doorbell
+    camera fires person_occupancy, lock onto the highest-priority
+    currently-active camera among all 4 non-doorbell cameras.
+  triggers:
+    - trigger: state
+      entity_id:
+        - binary_sensor.nest_cam_2_person_occupancy
+        - binary_sensor.nest_cam_1_person_occupancy
+        - binary_sensor.nanit_benjamin_person_occupancy
+        - binary_sensor.nanit_travel_person_occupancy
+      to: "on"
+  conditions:
+    - condition: state
+      entity_id: input_text.priority_camera_lock
+      state: "none"
+  actions:
+    - variables:
+        active_cam: >-
+          {{ 'nest_cam_2' if is_state('binary_sensor.nest_cam_2_person_occupancy', 'on')
+             else 'nest_cam_1' if is_state('binary_sensor.nest_cam_1_person_occupancy', 'on')
+             else 'nanit_benjamin' if is_state('binary_sensor.nanit_benjamin_person_occupancy', 'on')
+             else 'nanit_travel' if is_state('binary_sensor.nanit_travel_person_occupancy', 'on')
+             else 'none' }}
+    - condition: template
+      value_template: "{{ active_cam != 'none' }}"
+    - action: timer.cancel
+      target:
+        entity_id: timer.priority_camera_release
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.priority_camera_lock
+      data:
+        value: "{{ active_cam }}"
+  mode: single
+
+- id: camera_follow_code_retrigger
+  alias: "Camera Follow Code — Reset timer on locked camera retrigger"
+  description: >-
+    Camera Follow Code — When the currently-locked camera fires
+    person_occupancy again, cancel the trailing timer (camera is
+    active, no countdown needed).
+  triggers:
+    - trigger: state
+      entity_id:
+        - binary_sensor.doorbell_person_occupancy
+        - binary_sensor.nest_cam_2_person_occupancy
+        - binary_sensor.nest_cam_1_person_occupancy
+        - binary_sensor.nanit_benjamin_person_occupancy
+        - binary_sensor.nanit_travel_person_occupancy
+      to: "on"
+  conditions:
+    - condition: template
+      value_template: >-
+        {% set cam = trigger.entity_id | replace('binary_sensor.', '') | replace('_person_occupancy', '') %}
+        {{ states('input_text.priority_camera_lock') == cam }}
+  actions:
+    - action: timer.cancel
+      target:
+        entity_id: timer.priority_camera_release
+  mode: queued
+  max: 10
+
+- id: camera_follow_code_locked_clear
+  alias: "Camera Follow Code — Start timer when locked camera clears"
+  description: >-
+    Camera Follow Code — When a non-doorbell locked camera's
+    person_occupancy clears, start the 60-second trailing timer.
+    Doorbell clear is handled by the doorbell-specific automation.
+  triggers:
+    - trigger: state
+      entity_id:
+        - binary_sensor.nest_cam_2_person_occupancy
+        - binary_sensor.nest_cam_1_person_occupancy
+        - binary_sensor.nanit_benjamin_person_occupancy
+        - binary_sensor.nanit_travel_person_occupancy
+      to: "off"
+  conditions:
+    - condition: template
+      value_template: >-
+        {% set cam = trigger.entity_id | replace('binary_sensor.', '') | replace('_person_occupancy', '') %}
+        {{ states('input_text.priority_camera_lock') == cam }}
+  actions:
+    - action: timer.start
+      target:
+        entity_id: timer.priority_camera_release
+      data:
+        duration: "00:01:00"
+  mode: single
+
+- id: camera_follow_code_preempt
+  alias: "Camera Follow Code — Preempt during trailing window"
+  description: >-
+    Camera Follow Code — During a non-doorbell camera's trailing
+    window (locked camera is quiet, timer running), another
+    non-doorbell camera can preempt. Picks the highest-priority
+    active camera among all non-doorbell cameras.
+  triggers:
+    - trigger: state
+      entity_id:
+        - binary_sensor.nest_cam_2_person_occupancy
+        - binary_sensor.nest_cam_1_person_occupancy
+        - binary_sensor.nanit_benjamin_person_occupancy
+        - binary_sensor.nanit_travel_person_occupancy
+      to: "on"
+  conditions:
+    - condition: template
+      value_template: >-
+        {% set lock = states('input_text.priority_camera_lock') %}
+        {% set trigger_cam = trigger.entity_id | replace('binary_sensor.', '') | replace('_person_occupancy', '') %}
+        {% set locked_occ = 'binary_sensor.' ~ lock ~ '_person_occupancy' %}
+        {{ lock != 'none' and lock != 'doorbell' and lock != trigger_cam and is_state(locked_occ, 'off') }}
+  actions:
+    - variables:
+        active_cam: >-
+          {{ 'nest_cam_2' if is_state('binary_sensor.nest_cam_2_person_occupancy', 'on')
+             else 'nest_cam_1' if is_state('binary_sensor.nest_cam_1_person_occupancy', 'on')
+             else 'nanit_benjamin' if is_state('binary_sensor.nanit_benjamin_person_occupancy', 'on')
+             else 'nanit_travel' if is_state('binary_sensor.nanit_travel_person_occupancy', 'on')
+             else 'none' }}
+    - condition: template
+      value_template: "{{ active_cam != 'none' }}"
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.priority_camera_lock
+      data:
+        value: "{{ active_cam }}"
+    - action: timer.cancel
+      target:
+        entity_id: timer.priority_camera_release
+    - action: timer.start
+      target:
+        entity_id: timer.priority_camera_release
+      data:
+        duration: "00:01:00"
+  mode: queued
+  max: 5
+
+- id: camera_follow_code_release
+  alias: "Camera Follow Code — Release lock on timer finish"
+  description: >-
+    Camera Follow Code — When the 60-second trailing timer expires,
+    check whether any camera still has active person_occupancy. If
+    so, lock onto the highest-priority one and restart the timer.
+    Otherwise release the lock so the slideshow resumes. Also runs
+    on HA start (with 1-second delay) to reconcile state after reboot.
+  triggers:
+    - trigger: event
+      event_type: timer.finished
+      event_data:
+        entity_id: timer.priority_camera_release
+      id: timer_finished
+    - trigger: homeassistant
+      event: start
+      id: ha_start
+  conditions: []
+  actions:
+    - if:
+        - condition: trigger
+          id: ha_start
+      then:
+        - delay: "00:00:01"
+    - variables:
+        active_cam: >-
+          {{ 'doorbell' if is_state('binary_sensor.doorbell_person_occupancy', 'on')
+             else 'nest_cam_2' if is_state('binary_sensor.nest_cam_2_person_occupancy', 'on')
+             else 'nest_cam_1' if is_state('binary_sensor.nest_cam_1_person_occupancy', 'on')
+             else 'nanit_benjamin' if is_state('binary_sensor.nanit_benjamin_person_occupancy', 'on')
+             else 'nanit_travel' if is_state('binary_sensor.nanit_travel_person_occupancy', 'on')
+             else 'none' }}
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ active_cam != 'none' }}"
+          sequence:
+            - action: input_text.set_value
+              target:
+                entity_id: input_text.priority_camera_lock
+              data:
+                value: "{{ active_cam }}"
+            - action: timer.start
+              target:
+                entity_id: timer.priority_camera_release
+              data:
+                duration: "00:01:00"
+      default:
+        - action: input_text.set_value
+          target:
+            entity_id: input_text.priority_camera_lock
+          data:
+            value: "none"
+  mode: single
