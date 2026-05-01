@@ -251,6 +251,47 @@ kiosk_mode:
 
 ---
 
+## Camera Follow Code
+
+Stateful priority camera lock with 60-second trailing hold for the
+mobilev1 priority-display zone. Replaces the previous stateless
+`*_motion_sticky` binary sensors + if/elif cascade.
+
+### How it works
+When a camera detects a person (`*_person_occupancy` → on), it becomes
+the locked camera. The lock holds for as long as person_occupancy is
+active PLUS a 60-second trailing window after it clears. During the
+trailing window, another camera can preempt if the locked camera is
+quiet. The doorbell is a hard override — it always wins regardless of
+what's currently locked.
+
+### Files involved
+| File | What |
+|------|------|
+| `configuration.yaml` | `input_text.priority_camera_lock`, `timer.priority_camera_release`, `sensor.priority_camera` template |
+| `automations.yaml` | 7 automations aliased "Camera Follow Code — <step>" |
+
+### Priority order
+doorbell > nest_cam_2 > nest_cam_1 > nanit_benjamin > nanit_travel
+
+### Doorbell hard-override rule
+Doorbell always preempts any other locked camera. No other camera can
+preempt doorbell. Doorbell's trailing timer is managed separately from
+the general camera clear logic.
+
+### How to disable / replace
+1. Delete all 7 "Camera Follow Code" automations from `automations.yaml`
+2. Restore the `sensor.priority_camera` template to its original
+   if/elif cascade reading `*_person_occupancy` + `*_motion_sticky`
+3. Recreate the 5 `*_motion_sticky` template binary_sensors in
+   `configuration.yaml` (delay_off: 00:00:05)
+4. Update dashboard conditional cards back to
+   `binary_sensor.*_motion_sticky == 'on'`
+5. Remove `input_text.priority_camera_lock` and
+   `timer.priority_camera_release` helpers
+
+---
+
 ## ⚠️ Known Issues / Backlog
 
 | Issue | Status | Notes |

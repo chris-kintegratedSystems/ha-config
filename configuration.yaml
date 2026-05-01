@@ -50,6 +50,21 @@ input_number:
     initial: 0
     icon: mdi:view-carousel
 
+# Camera Follow Code — stores which camera currently holds the priority lock.
+# Values: 'none', 'doorbell', 'nest_cam_2', 'nest_cam_1', 'nanit_benjamin', 'nanit_travel'.
+input_text:
+  priority_camera_lock:
+    name: "Camera Follow Code — Active Lock"
+    initial: "none"
+    max: 20
+
+# Camera Follow Code — 60-second trailing window before releasing camera lock.
+timer:
+  priority_camera_release:
+    name: "Camera Follow Code — Release Timer"
+    duration: "00:01:00"
+    restore: true
+
 template:
   - sensor:
       - name: "Chris Distance from Home"
@@ -70,60 +85,17 @@ template:
             {{ (distance('person.claire', 'zone.home') * 0.621371) | round(1) }} mi away
           {% endif %}
 
-      # Drives the mobilev1 priority-display zone camera takeover.
-      # Priority order: doorbell > living_room > izzy > nanit_benjamin > nanit_travel.
-      # Alphabet values match kis-nav.js PRIORITY_CAMERA_MAP keys.
+      # Camera Follow Code — driven by input_text.priority_camera_lock
+      # (see automations in automations.yaml, search "Camera Follow Code").
+      # Maps entity-stem keys to the friendly keys used by kis-nav.js
+      # PRIORITY_CAMERA_MAP and the dashboard section_label template.
       - name: "Priority Camera"
         unique_id: priority_camera
         state: >
-          {% if is_state('binary_sensor.doorbell_person_occupancy', 'on') or is_state('binary_sensor.doorbell_motion_sticky', 'on') %}
-            doorbell
-          {% elif is_state('binary_sensor.nest_cam_2_person_occupancy', 'on') or is_state('binary_sensor.nest_cam_2_motion_sticky', 'on') %}
-            living_room
-          {% elif is_state('binary_sensor.nest_cam_1_person_occupancy', 'on') or is_state('binary_sensor.nest_cam_1_motion_sticky', 'on') %}
-            izzy
-          {% elif is_state('binary_sensor.nanit_benjamin_person_occupancy', 'on') or is_state('binary_sensor.nanit_benjamin_motion_sticky', 'on') %}
-            nanit_benjamin
-          {% elif is_state('binary_sensor.nanit_travel_person_occupancy', 'on') or is_state('binary_sensor.nanit_travel_motion_sticky', 'on') %}
-            nanit_travel
-          {% else %}
-            none
-          {% endif %}
-
-  # Sticky person-occupancy mirrors — hold "on" for 5 s after Frigate
-  # stops detecting a person. Uses *_person_occupancy (AI object
-  # detection) instead of *_motion (raw pixel change) to avoid false
-  # triggers from trees, shadows, and wind.
-  - binary_sensor:
-      - name: "Doorbell Motion Sticky"
-        unique_id: doorbell_motion_sticky
-        device_class: motion
-        state: "{{ is_state('binary_sensor.doorbell_person_occupancy', 'on') }}"
-        delay_off: "00:00:05"
-
-      - name: "Nest Cam 2 Motion Sticky"
-        unique_id: nest_cam_2_motion_sticky
-        device_class: motion
-        state: "{{ is_state('binary_sensor.nest_cam_2_person_occupancy', 'on') }}"
-        delay_off: "00:00:05"
-
-      - name: "Nest Cam 1 Motion Sticky"
-        unique_id: nest_cam_1_motion_sticky
-        device_class: motion
-        state: "{{ is_state('binary_sensor.nest_cam_1_person_occupancy', 'on') }}"
-        delay_off: "00:00:05"
-
-      - name: "Nanit Benjamin Motion Sticky"
-        unique_id: nanit_benjamin_motion_sticky
-        device_class: motion
-        state: "{{ is_state('binary_sensor.nanit_benjamin_person_occupancy', 'on') }}"
-        delay_off: "00:00:05"
-
-      - name: "Nanit Travel Motion Sticky"
-        unique_id: nanit_travel_motion_sticky
-        device_class: motion
-        state: "{{ is_state('binary_sensor.nanit_travel_person_occupancy', 'on') }}"
-        delay_off: "00:00:05"
+          {% set lock = states('input_text.priority_camera_lock') %}
+          {{ 'living_room' if lock == 'nest_cam_2'
+             else 'izzy' if lock == 'nest_cam_1'
+             else lock }}
 
 # ─── RECORDER ────────────────────────────────────────────────────────────────
 # Controls what gets written to your database (home-assistant_v2.db)
