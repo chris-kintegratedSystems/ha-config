@@ -18,7 +18,7 @@ default_config:
 frontend:
   themes: !include_dir_merge_named themes
   extra_module_url:
-    - /local/mobile_v1/kis-nav.js?v=49
+    - /local/mobile_v1/kis-nav.js?v=50
 
 automation: !include automations.yaml
 script: !include scripts.yaml
@@ -51,7 +51,7 @@ input_number:
     icon: mdi:view-carousel
 
 # Camera Follow Code — stores which camera currently holds the priority lock.
-# Values: 'none', 'doorbell', 'nest_cam_2', 'nest_cam_1', 'nanit_benjamin', 'nanit_travel'.
+# Values: 'none', 'doorbell', 'living_room', 'bens_room', 'nanit_benjamin', 'nanit_travel'.
 input_text:
   priority_camera_lock:
     name: "Camera Follow Code — Active Lock"
@@ -87,15 +87,10 @@ template:
 
       # Camera Follow Code — driven by input_text.priority_camera_lock
       # (see automations in automations.yaml, search "Camera Follow Code").
-      # Maps entity-stem keys to the friendly keys used by kis-nav.js
-      # PRIORITY_CAMERA_MAP and the dashboard section_label template.
+      # Lock values are physical-room keys, passed through directly.
       - name: "Priority Camera"
         unique_id: priority_camera
-        state: >
-          {% set lock = states('input_text.priority_camera_lock') %}
-          {{ 'living_room' if lock == 'nest_cam_2'
-             else 'izzy' if lock == 'nest_cam_1'
-             else lock }}
+        state: "{{ states('input_text.priority_camera_lock') }}"
 
 # ─── RECORDER ────────────────────────────────────────────────────────────────
 # Controls what gets written to your database (home-assistant_v2.db)

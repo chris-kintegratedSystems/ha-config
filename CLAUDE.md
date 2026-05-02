@@ -160,8 +160,8 @@ light.bens_light
 | Name | Entity ID | Notes |
 |------|-----------|-------|
 | Doorbell | `camera.doorbell` | Vivint DBC300. Use `camera_view: auto` (not live). DBC300 RTSP is fronted by the go2rtc container (stream name `doorbell`). |
-| Nest Cam 1 | `camera.nest_cam_1` | Nest camera (formerly Izzy Camera). Use `camera_view: auto`. Rate-limit prone. |
-| Nest Cam 2 | `camera.nest_cam_2` | Nest camera (formerly Living Room). Use `camera_view: auto`. |
+| Nest Cam 1 | `camera.nest_cam_1` | Nest camera — physically in Living Room. Priority key: `living_room`. Use `camera_view: auto`. Rate-limit prone. |
+| Nest Cam 2 | `camera.nest_cam_2` | Nest camera — physically in Ben's Room. Priority key: `bens_room`. Use `camera_view: auto`. |
 | Nanit Benjamin | `camera.nanit_benjamin` | Nanit baby monitor via local RTMP restream. ffmpeg platform. See "Nanit integration" below. |
 | Nanit Travel | `camera.nanit_travel` | Portable Nanit unit. Same restream container. |
 | Doorbell Motion | `binary_sensor.doorbell_motion` | |
@@ -272,7 +272,7 @@ what's currently locked.
 | `automations.yaml` | 7 automations aliased "Camera Follow Code — <step>" |
 
 ### Priority order
-doorbell > nest_cam_2 > nest_cam_1 > nanit_benjamin > nanit_travel
+doorbell > living_room > bens_room > nanit_benjamin > nanit_travel
 
 ### Doorbell hard-override rule
 Doorbell always preempts any other locked camera. No other camera can
