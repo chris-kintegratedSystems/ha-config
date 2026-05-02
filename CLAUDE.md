@@ -526,6 +526,71 @@ sudo docker image prune -f
 
 ---
 
+## WebRTC Camera Stream — Investigation Notes (May 2026)
+
+Status: WebRTC enabled via Frigate integration option
+`enable_webrtc=True`. Architecture is correct and rate-limit-safe.
+
+### Observed Behavior
+- Stationary clients (wall kiosk Tab A9+ at .150): stable WebRTC
+  connection, smooth playback
+- Mobile iPad held in hand while walking through house: choppy
+  with 5-10 second freeze cycles
+- Laptop on Wi-Fi (.183): WebRTC session teardown/rebuild every
+  12-23 seconds, likely Chromium responding to hardware decoder
+  fallback
+- Nanit Travel camera: smooth on all clients (control case —
+  1-second keyframe interval, lower resolution, lower bitrate)
+
+### Root Cause
+Wi-Fi AP handoffs during mobile use. Six WiFi 5 APs in the home
+without 802.11r/k/v fast roaming. Each handoff causes 1-3 seconds
+of network disruption, during which WebRTC over UDP loses packets.
+After disruption, video freezes until next I-frame arrives.
+
+Nest cameras have 2-second keyframe interval → up to 2s freeze
+recovery → ~5-10s total visible freeze including handoff.
+Nanit has 1-second keyframe interval → ~1s freeze recovery →
+imperceptible.
+
+### Ruled Out (with evidence)
+- Stream-level corruption: bytestream comparison shows clean
+  SPS/PPS, zero decode errors on both Nanit and Nest streams
+- Network bandwidth: <1% utilization on Pi gigabit eth
+- Pi compute: 25% CPU, 8 GB RAM headroom
+- Multi-stream contention: laptop on single camera still cycles
+- 11-minute Nest SDM reconnect cycle: real (5,504 lifetime
+  watchdog events) but doesn't match observed 10-20s pattern
+- Hardware decoder rejection on Pi side: Pi isn't decoding for
+  browsers, just restreaming
+
+### Fix Paths (queued, not yet implemented)
+
+#### Option A: Reduce Nest keyframe interval to 1 second (Frigate)
+Add `input_kf=1` (or equivalent) to Frigate go2rtc restream params
+for Nest cameras. Reduces freeze-after-handoff from 2s to 1s.
+Doesn't prevent handoff itself, but reduces visible impact.
+Cost: minor, possibly small CPU increase on Pi.
+Estimated effort: 30 min config + test.
+
+#### Option B: Enable 802.11r/k/v fast BSS transition on Araknis APs
+Standard Wi-Fi roaming optimization. Reduces handoff latency from
+1-3 seconds down to ~50ms. Addresses root cause for all mobile
+WebRTC use, not just cameras.
+Cost: zero, infrastructure change in Araknis admin.
+Estimated effort: 15-30 min.
+
+Recommendation: ship both. They stack. Option B addresses root
+cause, Option A reduces residual impact even with fast roaming.
+
+### Accept-as-is rationale (current state)
+WebRTC architecture is correct. Stream quality is correct. Pi
+compute is correct. The visible choppiness is a Wi-Fi handoff
+limitation that affects mobile clients only. Wall-mounted devices
+work as expected.
+
+---
+
 ## 📦 .gitignore (for this repo)
 
 ```
