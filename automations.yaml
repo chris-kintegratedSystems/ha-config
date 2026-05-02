@@ -524,8 +524,8 @@
   triggers:
     - trigger: state
       entity_id:
-        - binary_sensor.nest_cam_2_person_occupancy
         - binary_sensor.nest_cam_1_person_occupancy
+        - binary_sensor.nest_cam_2_person_occupancy
         - binary_sensor.nanit_benjamin_person_occupancy
         - binary_sensor.nanit_travel_person_occupancy
       to: "on"
@@ -536,8 +536,8 @@
   actions:
     - variables:
         active_cam: >-
-          {{ 'nest_cam_2' if is_state('binary_sensor.nest_cam_2_person_occupancy', 'on')
-             else 'nest_cam_1' if is_state('binary_sensor.nest_cam_1_person_occupancy', 'on')
+          {{ 'living_room' if is_state('binary_sensor.nest_cam_1_person_occupancy', 'on')
+             else 'bens_room' if is_state('binary_sensor.nest_cam_2_person_occupancy', 'on')
              else 'nanit_benjamin' if is_state('binary_sensor.nanit_benjamin_person_occupancy', 'on')
              else 'nanit_travel' if is_state('binary_sensor.nanit_travel_person_occupancy', 'on')
              else 'none' }}
@@ -563,16 +563,23 @@
     - trigger: state
       entity_id:
         - binary_sensor.doorbell_person_occupancy
-        - binary_sensor.nest_cam_2_person_occupancy
         - binary_sensor.nest_cam_1_person_occupancy
+        - binary_sensor.nest_cam_2_person_occupancy
         - binary_sensor.nanit_benjamin_person_occupancy
         - binary_sensor.nanit_travel_person_occupancy
       to: "on"
   conditions:
     - condition: template
       value_template: >-
-        {% set cam = trigger.entity_id | replace('binary_sensor.', '') | replace('_person_occupancy', '') %}
-        {{ states('input_text.priority_camera_lock') == cam }}
+        {% set ENTITY_TO_KEY = {
+          'doorbell': 'doorbell',
+          'nest_cam_1': 'living_room',
+          'nest_cam_2': 'bens_room',
+          'nanit_benjamin': 'nanit_benjamin',
+          'nanit_travel': 'nanit_travel'
+        } %}
+        {% set stem = trigger.entity_id.split('.')[1] | replace('_person_occupancy', '') %}
+        {{ ENTITY_TO_KEY.get(stem, stem) == states('input_text.priority_camera_lock') }}
   actions:
     - action: timer.cancel
       target:
@@ -589,16 +596,22 @@
   triggers:
     - trigger: state
       entity_id:
-        - binary_sensor.nest_cam_2_person_occupancy
         - binary_sensor.nest_cam_1_person_occupancy
+        - binary_sensor.nest_cam_2_person_occupancy
         - binary_sensor.nanit_benjamin_person_occupancy
         - binary_sensor.nanit_travel_person_occupancy
       to: "off"
   conditions:
     - condition: template
       value_template: >-
-        {% set cam = trigger.entity_id | replace('binary_sensor.', '') | replace('_person_occupancy', '') %}
-        {{ states('input_text.priority_camera_lock') == cam }}
+        {% set ENTITY_TO_KEY = {
+          'nest_cam_1': 'living_room',
+          'nest_cam_2': 'bens_room',
+          'nanit_benjamin': 'nanit_benjamin',
+          'nanit_travel': 'nanit_travel'
+        } %}
+        {% set stem = trigger.entity_id.split('.')[1] | replace('_person_occupancy', '') %}
+        {{ ENTITY_TO_KEY.get(stem, stem) == states('input_text.priority_camera_lock') }}
   actions:
     - action: timer.start
       target:
@@ -617,23 +630,36 @@
   triggers:
     - trigger: state
       entity_id:
-        - binary_sensor.nest_cam_2_person_occupancy
         - binary_sensor.nest_cam_1_person_occupancy
+        - binary_sensor.nest_cam_2_person_occupancy
         - binary_sensor.nanit_benjamin_person_occupancy
         - binary_sensor.nanit_travel_person_occupancy
       to: "on"
   conditions:
     - condition: template
       value_template: >-
+        {% set ENTITY_TO_KEY = {
+          'nest_cam_1': 'living_room',
+          'nest_cam_2': 'bens_room',
+          'nanit_benjamin': 'nanit_benjamin',
+          'nanit_travel': 'nanit_travel'
+        } %}
+        {% set KEY_TO_STEM = {
+          'living_room': 'nest_cam_1',
+          'bens_room': 'nest_cam_2',
+          'nanit_benjamin': 'nanit_benjamin',
+          'nanit_travel': 'nanit_travel'
+        } %}
         {% set lock = states('input_text.priority_camera_lock') %}
-        {% set trigger_cam = trigger.entity_id | replace('binary_sensor.', '') | replace('_person_occupancy', '') %}
-        {% set locked_occ = 'binary_sensor.' ~ lock ~ '_person_occupancy' %}
-        {{ lock != 'none' and lock != 'doorbell' and lock != trigger_cam and is_state(locked_occ, 'off') }}
+        {% set stem = trigger.entity_id.split('.')[1] | replace('_person_occupancy', '') %}
+        {% set trigger_key = ENTITY_TO_KEY.get(stem, stem) %}
+        {% set locked_occ = 'binary_sensor.' ~ KEY_TO_STEM.get(lock, lock) ~ '_person_occupancy' %}
+        {{ lock != 'none' and lock != 'doorbell' and lock != trigger_key and is_state(locked_occ, 'off') }}
   actions:
     - variables:
         active_cam: >-
-          {{ 'nest_cam_2' if is_state('binary_sensor.nest_cam_2_person_occupancy', 'on')
-             else 'nest_cam_1' if is_state('binary_sensor.nest_cam_1_person_occupancy', 'on')
+          {{ 'living_room' if is_state('binary_sensor.nest_cam_1_person_occupancy', 'on')
+             else 'bens_room' if is_state('binary_sensor.nest_cam_2_person_occupancy', 'on')
              else 'nanit_benjamin' if is_state('binary_sensor.nanit_benjamin_person_occupancy', 'on')
              else 'nanit_travel' if is_state('binary_sensor.nanit_travel_person_occupancy', 'on')
              else 'none' }}
@@ -682,8 +708,8 @@
     - variables:
         active_cam: >-
           {{ 'doorbell' if is_state('binary_sensor.doorbell_person_occupancy', 'on')
-             else 'nest_cam_2' if is_state('binary_sensor.nest_cam_2_person_occupancy', 'on')
-             else 'nest_cam_1' if is_state('binary_sensor.nest_cam_1_person_occupancy', 'on')
+             else 'living_room' if is_state('binary_sensor.nest_cam_1_person_occupancy', 'on')
+             else 'bens_room' if is_state('binary_sensor.nest_cam_2_person_occupancy', 'on')
              else 'nanit_benjamin' if is_state('binary_sensor.nanit_benjamin_person_occupancy', 'on')
              else 'nanit_travel' if is_state('binary_sensor.nanit_travel_person_occupancy', 'on')
              else 'none' }}

@@ -160,8 +160,8 @@ light.bens_light
 | Name | Entity ID | Notes |
 |------|-----------|-------|
 | Doorbell | `camera.doorbell` | Vivint DBC300. Use `camera_view: auto` (not live). DBC300 RTSP is fronted by the go2rtc container (stream name `doorbell`). |
-| Nest Cam 1 | `camera.nest_cam_1` | Nest camera (formerly Izzy Camera). Use `camera_view: auto`. Rate-limit prone. |
-| Nest Cam 2 | `camera.nest_cam_2` | Nest camera (formerly Living Room). Use `camera_view: auto`. |
+| Nest Cam 1 | `camera.nest_cam_1` | Nest camera — physically in Living Room. Priority key: `living_room`. Use `camera_view: auto`. Rate-limit prone. |
+| Nest Cam 2 | `camera.nest_cam_2` | Nest camera — physically in Ben's Room. Priority key: `bens_room`. Use `camera_view: auto`. |
 | Nanit Benjamin | `camera.nanit_benjamin` | Nanit baby monitor via local RTMP restream. ffmpeg platform. See "Nanit integration" below. |
 | Nanit Travel | `camera.nanit_travel` | Portable Nanit unit. Same restream container. |
 | Doorbell Motion | `binary_sensor.doorbell_motion` | |
@@ -272,7 +272,7 @@ what's currently locked.
 | `automations.yaml` | 7 automations aliased "Camera Follow Code — <step>" |
 
 ### Priority order
-doorbell > nest_cam_2 > nest_cam_1 > nanit_benjamin > nanit_travel
+doorbell > living_room > bens_room > nanit_benjamin > nanit_travel
 
 ### Doorbell hard-override rule
 Doorbell always preempts any other locked camera. No other camera can
@@ -364,6 +364,39 @@ After every deploy, verify these on real hardware:
 - Tab S9 via Fully Kiosk hard refresh
 - iPhone via HA Companion App hard refresh
 - Check day AND night mode on both devices
+
+---
+
+## Deploy Discipline — Regression Diagnosis
+
+When a bug "appears" coinciding with a deploy, the default hypothesis
+is "the deploy caused it." Disproving that requires a positive
+mechanism for prior invisibility — not just "must have been hidden
+somehow."
+
+If the mechanism can't be verified, log the uncertainty in the PR
+description and proceed only if BOTH:
+
+(a) The fix is mechanically correct independent of cause — i.e. the
+    same change would be correct whether or not the deploy caused
+    the regression
+(b) The fix is on its own revertable PR — not folded into the deploy
+    that may have caused the regression
+
+Never merge with the explanation "pre-existing bug, no idea why it
+just appeared" treated as established fact. Either name a specific
+mechanism for prior invisibility (commit history, conditional
+visibility change, entity load order) or explicitly log the
+uncertainty.
+
+Example: Camera Follow Code deploy (PR #38, ha-dashboard) coincided
+with ButtonCardJSTemplateError on Gemelli lock card. Initial diagnosis
+was "pre-existing wrong entity ID." Chris confirmed he had not seen
+the error before. Mechanism for prior invisibility was not verified.
+Fix shipped on isolated PR #39 because (a) lock.gemelli_door_lock →
+lock.gemelli_door was mechanically correct regardless of cause, and
+(b) PR #39 was independent of PR #38 and revertable. PR description
+explicitly logged the unverified causal story.
 
 ---
 
