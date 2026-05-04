@@ -400,6 +400,54 @@ explicitly logged the unverified causal story.
 
 ---
 
+## Deploy Discipline — Background Loop Orphan Risk
+
+Wait-for-ready idioms during deploys can leave orphaned processes
+running indefinitely if the spawning shell disconnects. May 2026
+incident: a "wait for HA to come up" until-loop spawned during
+a WebRTC deploy was orphaned to PID 1 when SSH disconnected, ran
+for 18+ hours hammering HA's API every 2 seconds with bad
+credentials. Generated 92% noise in HA logs, masking real signal.
+
+When using wait-for-ready loops during deploys, ALWAYS:
+
+1. Use port check, not API check, when possible:
+   ```bash
+   until nc -z localhost 8123; do sleep 2; done
+   ```
+   No auth required, no risk of auth-loop on token issues.
+
+2. If API check is required, include Bearer token AND max
+   iterations:
+   ```bash
+   MAX=60; for i in $(seq 1 $MAX); do
+     curl -s -H "Authorization: Bearer $TOKEN" ... && break
+     sleep 2
+   done
+   ```
+
+3. Always run via foregrounded process tied to active shell. If
+   spawning in background, use disown carefully or run inside a
+   systemd transient unit that cleans up.
+
+4. When deploying via SSH, use `tmux` or `screen` to keep shell
+   attached even on disconnect, OR use `ssh -t` with explicit
+   foreground commands.
+
+5. Before disconnecting from SSH after a deploy, verify no leftover
+   processes:
+   ```bash
+   ps -ef | grep cooper5389 | grep -v "ps -ef\|grep"
+   ```
+
+Diagnostic for "where is this auth spam coming from" type symptoms:
+```bash
+sudo tcpdump -i lo -A -s 1500 'port 8123' | grep -A 5 GET
+sudo lsof -i :8123 | grep -v homeassistant
+```
+
+---
+
 ## 🍼 Nanit Integration
 
 Nanit cameras stream into HA via a local RTMP restream container
@@ -583,11 +631,41 @@ Estimated effort: 15-30 min.
 Recommendation: ship both. They stack. Option B addresses root
 cause, Option A reduces residual impact even with fast roaming.
 
+Reference: `FAST_ROAMING_RESEARCH_AND_TEST_PLAN.md` in Drive
+ha-dashboard folder.
+
 ### Accept-as-is rationale (current state)
 WebRTC architecture is correct. Stream quality is correct. Pi
 compute is correct. The visible choppiness is a Wi-Fi handoff
 limitation that affects mobile clients only. Wall-mounted devices
 work as expected.
+
+---
+
+## Frigate Event Recording (May 2026)
+
+Status: NOT YET ENABLED — propose-first prompt drafted, audit
+complete, awaiting implementation.
+
+Audit findings (May 2026):
+- `record.enabled`: False (global)
+- No camera has `record` role on ffmpeg inputs (only `detect`)
+- `snapshots.enabled`: True with 7-day retention (3,696 snapshots /
+  7 days = 528/day average)
+- Object tracking: person-only globally, working on all 5 cameras
+  (except Nanit Benjamin frequently unavailable)
+- Storage: 205 GB free on NVMe (`/home/cooper5389/frigate/media` →
+  `/media/frigate`)
+
+Planned config (when enabled):
+- Event-based recording, person-only trigger, 14-day retention
+- 10s pre-capture, 10s post-capture
+- All 5 cameras, no per-camera overrides
+- Snapshots retention extended from 7 to 14 days
+- Per-camera `record` role added to existing ffmpeg inputs
+
+See Frigate event recording prompt in May 2026 session for full
+propose-first implementation plan.
 
 ---
 
