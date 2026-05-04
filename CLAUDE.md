@@ -577,68 +577,109 @@ sudo docker image prune -f
 ## WebRTC Camera Stream — Investigation Notes (May 2026)
 
 Status: WebRTC enabled via Frigate integration option
-`enable_webrtc=True`. Architecture is correct and rate-limit-safe.
+`enable_webrtc=True`. Architecture verified correct and
+rate-limit-safe. Visible choppiness on Nest cams and doorbell
+remains UNDIAGNOSED.
 
-### Observed Behavior
-- Stationary clients (wall kiosk Tab A9+ at .150): stable WebRTC
-  connection, smooth playback
-- Mobile iPad held in hand while walking through house: choppy
-  with 5-10 second freeze cycles
-- Laptop on Wi-Fi (.183): WebRTC session teardown/rebuild every
-  12-23 seconds, likely Chromium responding to hardware decoder
-  fallback
-- Nanit Travel camera: smooth on all clients (control case —
-  1-second keyframe interval, lower resolution, lower bitrate)
+### Confirmed Findings
 
-### Root Cause
-Wi-Fi AP handoffs during mobile use. Six WiFi 5 APs in the home
-without 802.11r/k/v fast roaming. Each handoff causes 1-3 seconds
-of network disruption, during which WebRTC over UDP loses packets.
-After disruption, video freezes until next I-frame arrives.
+Architecture:
+- WebRTC enabled via Frigate integration `enable_webrtc=True`
+- go2rtc fan-out: single upstream Nest WebRTC session per
+  camera, multiple downstream consumers — confirmed safe re:
+  SDM rate limits (no rate limit errors since enable, March
+  2026 Nest-platform integration removed)
+- HLS fallback automatic on WebRTC negotiation failure
+- Pi resources adequate (25% CPU, 8 GB RAM headroom)
+- Network bandwidth fine (<1% utilization on gigabit)
 
-Nest cameras have 2-second keyframe interval → up to 2s freeze
-recovery → ~5-10s total visible freeze including handoff.
-Nanit has 1-second keyframe interval → ~1s freeze recovery →
-imperceptible.
+Stream quality:
+- Bytestream comparison Nanit Travel vs Nest cam_2: BOTH CLEAN
+- Zero SPS/PPS warnings, zero decode errors on either source
+- Nest cam_2: 1080p30 H.264 High profile L4.0, 2-second
+  keyframe interval
+- Nanit Travel: 960p10 H.264 Main profile L3.2, 1-second
+  keyframe interval
 
-### Ruled Out (with evidence)
-- Stream-level corruption: bytestream comparison shows clean
-  SPS/PPS, zero decode errors on both Nanit and Nest streams
-- Network bandwidth: <1% utilization on Pi gigabit eth
-- Pi compute: 25% CPU, 8 GB RAM headroom
-- Multi-stream contention: laptop on single camera still cycles
-- 11-minute Nest SDM reconnect cycle: real (5,504 lifetime
-  watchdog events) but doesn't match observed 10-20s pattern
-- Hardware decoder rejection on Pi side: Pi isn't decoding for
-  browsers, just restreaming
+Visible behavior (per Chris):
+- Nanit Travel: smooth on all clients tested
+- Nest cams + doorbell: choppy with ~5-10 second freeze cycles
+- Confirmed choppy clients: iPad (held while moving), laptop
+  (both Wi-Fi AND wired stationary configurations)
+- Wall kiosk visual smoothness: NOT independently verified
 
-### Fix Paths (queued, not yet implemented)
+### Server-side data (relevance unclear)
 
-#### Option A: Reduce Nest keyframe interval to 1 second (Frigate)
-Add `input_kf=1` (or equivalent) to Frigate go2rtc restream params
-for Nest cameras. Reduces freeze-after-handoff from 2s to 1s.
-Doesn't prevent handoff itself, but reduces visible impact.
-Cost: minor, possibly small CPU increase on Pi.
-Estimated effort: 30 min config + test.
+- Stable upstream Nest producers (9+ days continuous,
+  rate-limit-safe)
+- One client at .183 (laptop on Wi-Fi during one test) showed
+  WebRTC session teardown/rebuild every 12-23 seconds; not
+  confirmed to be the universal pattern
+- `chrome://webrtc-internals` on Chris's desktop PC showed
+  hardware decoder fallback (D3D11VideoDecoder → FFmpeg
+  software decode)
+- 11-minute Nest SDM reconnect cycle (5,504 lifetime watchdog
+  events) confirmed real but periodicity does NOT match
+  observed 10-20s symptom cycle
 
-#### Option B: Enable 802.11r/k/v fast BSS transition on Araknis APs
-Standard Wi-Fi roaming optimization. Reduces handoff latency from
-1-3 seconds down to ~50ms. Addresses root cause for all mobile
-WebRTC use, not just cameras.
-Cost: zero, infrastructure change in Araknis admin.
-Estimated effort: 15-30 min.
+### Hypotheses Tested and Ruled Out
 
-Recommendation: ship both. They stack. Option B addresses root
-cause, Option A reduces residual impact even with fast roaming.
+- Stream-level corruption — bytestream comparison clean
+- Network bandwidth — fine
+- Pi compute — fine
+- Multi-stream contention — single-camera laptop still cycles
+- Keyframe sparsity (8+ sec interval hypothesis) — actual
+  interval is 2-4s, doesn't match cycle
+- 11-minute Nest reconnect cycle — period mismatch
+- Wi-Fi packet loss as sole cause — contradicted by stationary
+  wired laptop showing same symptom
+- Wi-Fi AP handoffs as root cause — contradicted by stationary
+  wired laptop showing same symptom
 
-Reference: `FAST_ROAMING_RESEARCH_AND_TEST_PLAN.md` in Drive
-ha-dashboard folder.
+### Hypotheses NOT Yet Tested
 
-### Accept-as-is rationale (current state)
-WebRTC architecture is correct. Stream quality is correct. Pi
-compute is correct. The visible choppiness is a Wi-Fi handoff
-limitation that affects mobile clients only. Wall-mounted devices
-work as expected.
+- Why does stationary wired client show the same choppiness?
+- Is the hardware decoder fallback the cause, a symptom, or
+  unrelated?
+- Is wall kiosk actually smooth, or also choppy? (assumed
+  smooth based on stable connection, never visually verified)
+- Why does Nanit Travel work while Nest cams don't, when
+  architecture is identical?
+- Does the same wired stationary laptop show smooth HLS but
+  choppy WebRTC? (would prove it's WebRTC-specific not
+  stream-source)
+- Current 802.11r/k/v state on Araknis APs (not verified)
+- Frigate's embedded go2rtc 1.9.10 may have known WebRTC
+  issues with Nest sources — not researched
+
+### Multi-Round Diagnostic Lessons
+
+This investigation cycled through several incorrect hypotheses:
+1. 11-minute Nest reconnect — period mismatch
+2. Keyframe sparsity — measured short
+3. Hardware decoder bytestream issues — bytestream clean
+4. Connection teardown cycles — only one client showed this
+5. Wi-Fi handoffs — contradicted by wired stationary
+
+Multiple device IP misidentifications during diagnostic
+contributed to wrong conclusions. Discipline lesson: never
+document a root cause that hasn't been falsifiably tested
+against the actual symptom on the actual affected client class.
+
+### Future Session Starting Points (Not Endorsements)
+
+- Test wall kiosk explicitly: visually choppy or smooth?
+- Compare HLS vs WebRTC on identical stationary wired client
+  — does HLS smooth out the same stream?
+- `chrome://webrtc-internals` frame-by-frame analysis during a
+  freeze cycle on stationary wired client
+- Verify current Araknis fast roaming state before research
+  assumes it's off
+- Research Frigate go2rtc 1.9.10 known issues with Nest sources
+
+Reference: `FAST_ROAMING_RESEARCH_AND_TEST_PLAN.md` in Drive —
+research plan if fast roaming turns out to be relevant.
+Currently: relevance unverified.
 
 ---
 
