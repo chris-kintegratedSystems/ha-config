@@ -593,13 +593,21 @@ Architecture:
 - Pi resources adequate (25% CPU, 8 GB RAM headroom)
 - Network bandwidth fine (<1% utilization on gigabit)
 
-Stream quality:
+Stream quality (per-camera, measured May 2026):
 - Bytestream comparison Nanit Travel vs Nest cam_2: BOTH CLEAN
 - Zero SPS/PPS warnings, zero decode errors on either source
-- Nest cam_2: 1080p30 H.264 High profile L4.0, 2-second
-  keyframe interval
-- Nanit Travel: 960p10 H.264 Main profile L3.2, 1-second
-  keyframe interval
+- nest_cam_1 (Living Room): 1080p24, H.264 High L4.0, ~1.5 Mbps,
+  keyframe interval 5 seconds. Older Nest hardware generation.
+- nest_cam_2 (Ben's Room): 1080p30, H.264 High L4.0, ~1.2 Mbps,
+  keyframe interval 2 seconds. Newer Nest hardware generation.
+- doorbell (Vivint DBC300): 960x960 @ 15fps, H.264 Main L3.1,
+  ~700 kbps. Vivint integration tier limit; HW capable of 1080p.
+- nanit_benjamin (HW v2.0): 1080p10 @ 1.2 Mbps. indiefan/nanit
+  integration uses MOBILE profile which caps fps at 10. Camera
+  hardware capable of higher fps via ROOM profile (not requested
+  by current container).
+- nanit_travel (HW v1.5): 960p10 @ 1.9 Mbps. At hardware ceiling
+  for older Nanit unit.
 
 Visible behavior (per Chris):
 - Nanit Travel: smooth on all clients tested
@@ -651,6 +659,20 @@ Visible behavior (per Chris):
 - Current 802.11r/k/v state on Araknis APs (not verified)
 - Frigate's embedded go2rtc 1.9.10 may have known WebRTC
   issues with Nest sources — not researched
+- nest_cam_1's 5-second keyframe interval (vs nest_cam_2's 2s)
+  means longer freeze-recovery after any network disruption.
+  Hardware-determined, not configurable. If choppiness is
+  predominantly observed on Living Room camera, this is a
+  contributing factor independent of WebRTC pipeline issues.
+
+### KIS Production Implications
+
+- Hardware generation matters within a single brand. Two Nest
+  cameras of different generations on the same SDM API tier
+  produce materially different stream characteristics (24fps vs
+  30fps, 5s vs 2s keyframe interval). For client installs,
+  inventory existing cameras and identify generation before
+  quoting performance expectations.
 
 ### Multi-Round Diagnostic Lessons
 
