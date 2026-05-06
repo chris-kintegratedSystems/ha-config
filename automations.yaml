@@ -735,3 +735,33 @@
           data:
             value: "none"
   mode: single
+
+# ─── Severe Weather Auto-Focus ───────────────────────────────────────────────
+# Jumps the priority-display carousel to the Weather Radar slide (index 4)
+# when NWS issues an alert for Dallas County / Irving (TXC113, TXZ119).
+
+- alias: "Severe Weather — Focus Radar"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.nws_alerts_alerts
+      above: 0
+  action:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.priority_slide_index
+      data:
+        value: 4
+  mode: single
+
+- alias: "Severe Weather — Reset Carousel"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.nws_alerts_alerts
+      below: 1
+  action:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.priority_slide_index
+      data:
+        value: 0
+  mode: single
