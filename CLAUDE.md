@@ -251,6 +251,82 @@ kiosk_mode:
 
 ---
 
+## Dashboard Tenets (May 2026)
+
+Two non-negotiable principles for the mobilev1 dashboard and any successor:
+
+### 1. Fast Loading
+
+The dashboard must feel responsive. Specifically:
+- Time from URL hit to first interactive: < 3 seconds on the Tab A9+ wall kiosk
+- View switch (e.g., Home → Cameras): < 1 second to first frame
+- Camera live view connection: < 3 seconds from card mount to visible video
+
+### 2. Robust Operation
+
+The dashboard must tolerate normal household disruptions without breaking. Specifically:
+- Survives HA Docker restart without manual intervention
+- Survives one-camera unavailability without breaking other cards on the same view
+- Tolerates 30-day continuous uptime on the wall kiosk without DOM leaks or progressive slowdown
+- HACS dependency updates do not silently break dashboard functionality
+- Custom JS (kis-nav.js) survives HA frontend updates without breaking
+
+### Change Evaluation Process
+
+Before adding any new card type, HACS dependency, or frontend customization:
+
+1. PERFORMANCE BUDGET — Document the marginal load cost:
+   - Bundle size delta (KB added to initial page load)
+   - Network request delta (additional API calls at startup)
+   - Persistent memory impact (significant DOM growth, event listeners, polling)
+   - If unmeasured: do not proceed with significant changes
+
+2. ROBUSTNESS AUDIT — Document failure modes:
+   - What breaks if this dependency has a bug?
+   - What breaks if a HACS update changes behavior?
+   - What breaks if the upstream API changes?
+   - Acceptable failure mode is "graceful degradation" not "broken page"
+
+3. REVERSIBILITY — Document the rollback path:
+   - Steps to revert in < 10 minutes
+   - File paths, commands, expected end state
+   - Test the rollback path before shipping
+
+4. JUSTIFICATION — Document the user-experience benefit that justifies the cost:
+   - What concrete problem does this solve?
+   - Is the benefit proportional to the cost?
+   - Could a less invasive approach achieve the same goal?
+
+All four must be documented before Chris approves any dashboard-affecting change. Default to "do not add" if any of the four cannot be confidently answered.
+
+### Current Open Decision: ACC + card_mod for mobilev2 (May 2026)
+
+Performance budget:
+- ACC bundle: ~500KB+ added to dashboard load
+- card_mod: small but loaded as frontend module on every page
+- Network: additional ACC API calls for timeline/clips metadata
+- Estimated marginal cost: noticeable on cold load, acceptable on warm cache
+
+Robustness audit:
+- ACC v7.27.4 has documented active aspect ratio bugs (#1804, #2341, #2125)
+- card_mod CSS targets internal DOM that may change with ACC updates
+- HACS dependency drift over time
+- Failure mode if ACC breaks: cards don't render, but page structure preserved
+
+Reversibility:
+- mobilev2 is separate dashboard — delete .storage file + registry entry to revert in 5 minutes
+- mobilev1 unaffected throughout
+- Backup files preserved at every iteration step
+
+Justification:
+- Goal: smoother live camera playback for Nest cameras (problem documented in WebRTC investigation)
+- Tradeoff: dependency complexity for playback quality
+- Alternative considered: hardware upgrade (N100 mini-PC + FFmpeg sanitization) — higher cost, more effort, not yet evaluated
+
+Decision deferred until A/B test data on playback quality available. If playback improvement is marginal, the dependency cost is not justified.
+
+---
+
 ## Camera Follow Code
 
 Stateful priority camera lock with 60-second trailing hold for the
