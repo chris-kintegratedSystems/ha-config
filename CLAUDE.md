@@ -591,6 +591,136 @@ work as expected.
 
 ---
 
+## Camera Live Playback Architecture (May 2026 investigation)
+
+### Investigation summary
+
+Spent multiple sessions diagnosing live camera playback issues
+in HA dashboard. Tested across:
+- Card types: picture-entity, Advanced Camera Card v7.27.4
+- Streaming protocols: HLS, MSE, WebRTC via go2rtc
+- Frigate configurations: live_provider variations
+- Browser environments: Chrome on wired laptop, multiple sessions
+
+### Per-camera test results (May 2026 baseline)
+
+| Camera | Source Type | Resolution | Server CPU | go2rtc/MSE | go2rtc/WebRTC | HLS |
+|--------|------------|------------|------------|------------|---------------|-----|
+| Doorbell (Vivint DBC300) | RTSP | 960x960 @ 15fps | 9.2% | Smooth | untested | choppy |
+| Nest Cam 1 (Living Room) | Nest SDM | 1080p @ 24fps | 25.0% | catastrophic | smooth-then-cyclic-freeze | choppy |
+| Nest Cam 2 (Ben's Room) | Nest SDM | 1080p @ 30fps | 18.1% | (same source as cam_1) | (same as cam_1) | choppy |
+| Nanit Benjamin (HW v2.0) | RTMP | 1080p @ 10fps | 12.1% | (same source as travel) | untested | choppy |
+| Nanit Travel (HW v1.5) | RTMP | 960p @ 10fps | 6.1% | Smooth, 3sec latency | untested | choppy |
+
+### Root cause finding
+
+Nest cameras through SDM API deliver streams with two compounding
+problems:
+- Profile-level-id 42001f (H.264 Baseline at 1080p) triggers
+  browser hardware decoder rejection on common Chrome/Edge
+  builds. Software decoder fallback cannot sustain 1080p25,
+  producing freezes.
+- Stream renegotiation cycle approximately every 5 minutes
+  introduces brief corruption, recreating the freeze pattern
+  on a recurring basis.
+
+Frigate processes Nest streams without server-side errors (logs
+clean over multiple test sessions). go2rtc delivers streams
+faithfully. The constraint is at the source-to-browser pipeline.
+
+RTSP and RTMP sources do not exhibit this behavior. Same Frigate,
+same go2rtc, same browser, same network — clean source = smooth
+playback.
+
+### Architectural conclusion
+
+Live monitoring smoothness is determined by camera source quality,
+not by NVR/dashboard configuration. The right architectural
+question for any installation is:
+
+"Are these cameras' stream characteristics compatible with browser
+rendering through standard NVR pipelines?"
+
+- RTSP cameras (Reolink, Hikvision, Amcrest, Axis): yes
+- Nest cameras through SDM API: no, regardless of NVR
+- Vivint cameras through their RTSP integration: yes, with tier
+  limitations
+- Nanit cameras through indiefan/nanit container: yes
+
+### KIS Cameras Architecture Framework (revised)
+
+Camera SOURCE TIER is independent of NVR/COMPUTE TIER. Both must
+be specified for client deliverables.
+
+**Source tiers:**
+
+**Tier A — RTSP-native** (Reolink, Hikvision, Amcrest, Axis)
+- Clean H.264 streams, browser-decoder friendly
+- Smooth live playback through any standard NVR
+- Recommended for any client requiring continuous live monitoring
+- Cost: $150-400 per camera depending on features
+
+**Tier B — Smart cameras with proprietary streaming** (Nest, Ring,
+Arlo)
+- Smart features and event detection excellent
+- Live playback through third-party NVRs has documented issues
+- Suitable for at-a-glance status awareness and event review
+- Live monitoring requires the manufacturer's own app for parity
+
+**Tier C — Alarm system cameras** (Vivint, ADT, etc.)
+- Limited stream tiers exposed via integration
+- Quality depends on what the proprietary system permits
+- Suitable for security integration with the broader alarm system
+
+**Compute tiers (independent of source tier):**
+
+**KIS Cameras Lite** — Pi 5 + Coral USB
+- Up to 5 cameras, basic Frigate, HA integration
+- Best paired with Tier A cameras
+- $250 hardware
+
+**KIS Cameras Standard** — Intel N100 + Coral USB
+- Up to 8 cameras, full Frigate features
+- Best paired with Tier A cameras, supports mixed
+- $400-600 hardware
+
+**KIS Cameras Premium** — Intel N305 + Coral PCIe + redundant storage
+- 16+ cameras, full features, dedicated transcoding compute
+- Mixed source tiers supported
+- $1000+ hardware
+
+### KIS client conversation framework
+
+When clients ask about smooth 24/7 live monitoring:
+
+"Live monitoring smoothness comes from camera selection, not from
+more powerful NVR hardware. RTSP cameras through our standard
+Pi 5 + Frigate stack deliver smooth multi-camera live to wall
+displays and mobile dashboards. If you have existing Nest, Ring,
+or similar smart cameras and want to integrate them, we can do
+that for the smart features (motion alerts, event recording,
+automation triggers) but live viewing of those specific cameras
+in the unified dashboard will have limitations because of how
+those manufacturers deliver their streams. For live viewing of
+those cameras, the manufacturer's app on phone or tablet remains
+the smoothest path. We can quote you a hybrid system or a full
+RTSP system depending on your priorities."
+
+### Personal home decision (Chris, May 2026)
+
+- mobilev1 retained as production dashboard
+- Picture-entity polling for cameras provides at-a-glance status
+  awareness, which is the actual daily use case
+- Frigate web UI used for event review
+- Google Home app used when smooth Nest live viewing specifically
+  needed
+- No further dashboard live-playback work warranted
+- Future incremental upgrade path: add 1-2 RTSP cameras at
+  strategic positions (front door supplementing/replacing Vivint,
+  or main living area) for unified smooth live at those positions
+
+---
+
 ## 📦 .gitignore (for this repo)
 
 ```
