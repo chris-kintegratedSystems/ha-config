@@ -164,7 +164,7 @@ light.bens_light
 | Nest Cam 2 | `camera.nest_cam_2` | Nest camera — physically in Ben's Room. Priority key: `bens_room`. Use `camera_view: auto`. |
 | Nanit Benjamin | `camera.nanit_benjamin` | Nanit baby monitor via local RTMP restream. ffmpeg platform. See "Nanit integration" below. |
 | Nanit Travel | `camera.nanit_travel` | Portable Nanit unit. Same restream container. |
-| Reolink (temp) | `camera.reolink_living_room_temp` | Reolink RLC-820A at 192.168.51.70. 4K H.264 main + 640×360 sub via Frigate embedded go2rtc (`h264Preview_01_main`/`h264Preview_01_sub`). Live-view only — detect, record, snapshots all disabled. Bench-tested near rack; permanent living room install is future work. |
+| Reolink (temp) | `camera.reolink_living_room_temp` | Reolink RLC-820A at 192.168.51.70 (MAC ec:71:db:86:d5:6f, hostname reolink-rlc820a-livingroom-temp). 2560×1440 @ 25fps H.264 main + 640×360 @ 10fps H.264 sub via Frigate embedded go2rtc (`h264Preview_01_main`/`h264Preview_01_sub`). Live-view only — detect, record, snapshots all disabled. **Encoding quirk:** camera serves both h264Preview and h265Preview paths simultaneously regardless of encoder setting — always use h264 paths to avoid browser transcode issues. Net Pi 5 CPU cost: ~10% at 2K@25fps. Bench-tested near rack; permanent living room ceiling install is future work. |
 | Doorbell Motion | `binary_sensor.doorbell_motion` | |
 
 **Camera rules:**
