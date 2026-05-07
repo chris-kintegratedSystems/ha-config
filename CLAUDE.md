@@ -164,6 +164,7 @@ light.bens_light
 | Nest Cam 2 | `camera.nest_cam_2` | Nest camera — physically in Ben's Room. Priority key: `bens_room`. Use `camera_view: auto`. |
 | Nanit Benjamin | `camera.nanit_benjamin` | Nanit baby monitor via local RTMP restream. ffmpeg platform. See "Nanit integration" below. |
 | Nanit Travel | `camera.nanit_travel` | Portable Nanit unit. Same restream container. |
+| Reolink (temp) | `camera.reolink_living_room_temp` | Reolink RLC-820A at 192.168.51.70. 4K H.264 main + 640×360 sub via Frigate embedded go2rtc (`h264Preview_01_main`/`h264Preview_01_sub`). Live-view only — detect, record, snapshots all disabled. Bench-tested near rack; permanent living room install is future work. |
 | Doorbell Motion | `binary_sensor.doorbell_motion` | |
 
 **Camera rules:**
@@ -176,10 +177,17 @@ light.bens_light
   - Ports: API `:1984`, RTSP `:8554`, WebRTC `:8555/tcp`
   - Only the `doorbell` stream is configured (Vivint DBC300 RTSP, plus a
     `camera.doorbell` variant for ffmpeg-sourced audio). Nest and Nanit
-    cameras are **not** in go2rtc — they flow through their native HA
-    integrations (Nest: google_nest_sdm, Nanit: ffmpeg platform against
-    the local indiefan/nanit RTMP restream). Adding them + wiring
-    `custom:webrtc-camera` for real two-way audio is a future scope.
+    cameras are **not** in standalone go2rtc — they flow through their
+    native HA integrations (Nest: google_nest_sdm, Nanit: ffmpeg
+    platform against the local indiefan/nanit RTMP restream). Adding
+    them + wiring `custom:webrtc-camera` for real two-way audio is a
+    future scope.
+  - Reolink RLC-820A streams via **Frigate's embedded go2rtc** (not the
+    standalone container). Config: `/home/cooper5389/frigate/config/config.yml`
+    under `go2rtc.streams.reolink_living_room_temp`. Uses
+    `h264Preview_01_main` + `h264Preview_01_sub` RTSP paths (h264 paths
+    only — h265 paths cause browser decoder issues). Credential is
+    `REOLINK_RTSP_PASSWORD` from 1Password KIS-Production vault.
 - Nest cameras: WebRTC/RTSP warnings are a Google API limitation, not fixable
 - Do NOT open camera dashboard on multiple devices simultaneously
 
