@@ -52,6 +52,12 @@ input_number:
 
 # Camera Follow Code — stores which camera currently holds the priority lock.
 # Values: 'none', 'doorbell', 'living_room', 'bens_room', 'nanit_benjamin', 'nanit_travel'.
+input_boolean:
+  kiosk_mode:
+    name: Kiosk Mode
+    initial: true
+    icon: mdi:fullscreen
+
 input_text:
   priority_camera_lock:
     name: "Camera Follow Code — Active Lock"
