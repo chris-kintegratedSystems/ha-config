@@ -72,6 +72,86 @@ input_text:
     name: "Camera Follow Code — Active Lock"
     initial: "none"
     max: 20
+  kis_day_primary_accent:
+    name: "KIS Day Primary Accent"
+    initial: "#0088a8"
+    max: 30
+  kis_day_bg_app:
+    name: "KIS Day Background"
+    initial: "#f0f2f5"
+    max: 30
+  kis_day_text_primary:
+    name: "KIS Day Primary Text"
+    initial: "#1a2030"
+    max: 30
+  kis_day_text_secondary:
+    name: "KIS Day Secondary Text"
+    initial: "#4a5a72"
+    max: 30
+  kis_day_success:
+    name: "KIS Day Success (Locked/Closed)"
+    initial: "#089464"
+    max: 30
+  kis_day_warning:
+    name: "KIS Day Warning (Unlocked)"
+    initial: "#c07808"
+    max: 30
+  kis_day_error:
+    name: "KIS Day Error (Open/Alert)"
+    initial: "#c02840"
+    max: 30
+  kis_day_info:
+    name: "KIS Day Info (Blue)"
+    initial: "#2d6bc4"
+    max: 30
+  kis_day_scene_active:
+    name: "KIS Day Scene Active"
+    initial: "#c07808"
+    max: 30
+  kis_day_section_label:
+    name: "KIS Day Section Label"
+    initial: "#7a8698"
+    max: 30
+  kis_night_primary_accent:
+    name: "KIS Night Primary Accent"
+    initial: "#00d4f0"
+    max: 30
+  kis_night_bg_app:
+    name: "KIS Night Background"
+    initial: "#070910"
+    max: 30
+  kis_night_text_primary:
+    name: "KIS Night Primary Text"
+    initial: "#eef2f8"
+    max: 30
+  kis_night_text_secondary:
+    name: "KIS Night Secondary Text"
+    initial: "#8a9ab8"
+    max: 30
+  kis_night_success:
+    name: "KIS Night Success (Locked/Closed)"
+    initial: "#10d090"
+    max: 30
+  kis_night_warning:
+    name: "KIS Night Warning (Unlocked)"
+    initial: "#f5a623"
+    max: 30
+  kis_night_error:
+    name: "KIS Night Error (Open/Alert)"
+    initial: "#f04060"
+    max: 30
+  kis_night_info:
+    name: "KIS Night Info (Blue)"
+    initial: "#4d8ef0"
+    max: 30
+  kis_night_scene_active:
+    name: "KIS Night Scene Active"
+    initial: "#f5a623"
+    max: 30
+  kis_night_section_label:
+    name: "KIS Night Section Label"
+    initial: "#4a5570"
+    max: 30
 
 # Camera Follow Code — 60-second trailing window before releasing camera lock.
 timer:
