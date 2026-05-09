@@ -20,6 +20,13 @@ frontend:
   extra_module_url:
     - /local/mobile_v1/kis-nav.js?v=52
 
+lovelace:
+  resources:
+    - url: /local/mobile_v2/custom-cards/kis-control-panel.js
+      type: module
+    - url: /local/mobile_v2/custom-cards/kis-scenes.js
+      type: module
+
 automation: !include automations.yaml
 script: !include scripts.yaml
 scene: !include scenes.yaml
