@@ -26,6 +26,8 @@ lovelace:
       type: module
     - url: /local/mobile_v2/custom-cards/kis-scenes.js
       type: module
+    - url: /local/mobile_v2/custom-cards/kis-settings.js
+      type: module
 
 automation: !include automations.yaml
 script: !include scripts.yaml
