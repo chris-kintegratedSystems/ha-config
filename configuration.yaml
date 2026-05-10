@@ -21,15 +21,13 @@ frontend:
     - /local/mobile_v1/kis-nav.js?v=52
 
 lovelace:
-  resources:
-    - url: /local/mobile_v2/custom-cards/kis-control-panel.js
-      type: module
-    - url: /local/mobile_v2/custom-cards/kis-scenes.js
-      type: module
-    - url: /local/mobile_v2/custom-cards/kis-settings.js
-      type: module
-    - url: /local/mobile_v2/kis-app-shell.js
-      type: module
+  dashboards:
+    mobile-v2:
+      mode: yaml
+      filename: www/mobile_v2/kis-dashboard-v2.yaml
+      title: mobilev2
+      icon: mdi:home
+      show_in_sidebar: true
 
 automation: !include automations.yaml
 script: !include scripts.yaml
