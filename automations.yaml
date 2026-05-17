@@ -765,3 +765,47 @@
       data:
         value: 0
   mode: single
+
+- id: 'mobilev2_theme_sync'
+  alias: "mobilev2 — Day/Night Theme Sync"
+  description: "Switches between kis-day and kis-night themes based on sun state and theme_mode selector. Auto follows sun, Day/Night force the theme."
+  triggers:
+  - trigger: state
+    entity_id: sun.sun
+  - trigger: state
+    entity_id: input_select.theme_mode
+  - trigger: homeassistant
+    event: start
+  actions:
+  - choose:
+    - conditions:
+      - condition: state
+        entity_id: input_select.theme_mode
+        state: Day
+      sequence:
+      - action: frontend.set_theme
+        data:
+          name: kis-day
+    - conditions:
+      - condition: state
+        entity_id: input_select.theme_mode
+        state: Night
+      sequence:
+      - action: frontend.set_theme
+        data:
+          name: kis-night
+    default:
+    - choose:
+      - conditions:
+        - condition: state
+          entity_id: sun.sun
+          state: above_horizon
+        sequence:
+        - action: frontend.set_theme
+          data:
+            name: kis-day
+      default:
+      - action: frontend.set_theme
+        data:
+          name: kis-night
+  mode: single
