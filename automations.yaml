@@ -703,6 +703,50 @@
             value: "none"
   mode: single
 
+- id: camera_follow_code_staleness_watchdog
+  alias: "Camera Follow Code — Staleness watchdog"
+  description: >-
+    Camera Follow Code — Defense-in-depth for upstream-stuck occupancy
+    sensors. When any camera lock is acquired, waits 10 minutes. If the
+    lock hasn't changed AND the trailing timer is still idle (meaning
+    the occupancy sensor never cleared to start the normal release
+    flow), force-releases the lock. Mode: restart ensures a legitimate
+    lock change mid-wait resets the watchdog against the new lock.
+  triggers:
+    - trigger: state
+      entity_id: input_text.priority_camera_lock
+      not_to:
+        - "none"
+        - ""
+  conditions: []
+  actions:
+    - variables:
+        locked_cam: "{{ trigger.to_state.state }}"
+    - wait_for_trigger:
+        - trigger: state
+          entity_id: input_text.priority_camera_lock
+      timeout:
+        minutes: 10
+      continue_on_timeout: true
+    - condition: template
+      value_template: >-
+        {{ wait.trigger is none
+           and states('input_text.priority_camera_lock') == locked_cam
+           and states('timer.priority_camera_release') == 'idle' }}
+    - action: persistent_notification.create
+      data:
+        title: "Camera lock staleness watchdog fired"
+        message: >-
+          Lock on "{{ locked_cam }}" held for 10 min with timer idle.
+          Occupancy: {{ states('binary_sensor.' ~ locked_cam ~ '_person_occupancy') }}.
+          Force-releasing to "none".
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.priority_camera_lock
+      data:
+        value: "none"
+  mode: restart
+
 # ─── Severe Weather Auto-Focus ───────────────────────────────────────────────
 # Jumps the priority-display carousel to the Weather Radar slide (index 4)
 # when NWS issues an alert for Dallas County / Irving (TXC113, TXZ119).
