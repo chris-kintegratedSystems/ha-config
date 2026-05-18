@@ -17,6 +17,13 @@ kis-day:
   info-color: "#2d6bc4"
   state-icon-color: "#4a5a72"
   lovelace-background: "#f0f2f5"
+  # HA sidebar variables
+  sidebar-background-color: "#f5f7fa"
+  sidebar-text-color: "#4a5a72"
+  sidebar-selected-text-color: "#0088a8"
+  sidebar-selected-icon-color: "#0088a8"
+  sidebar-icon-color: "#4a5a72"
+  sidebar-menu-button-text-color: "#1a2030"
   # KIS custom variables
   kis-bg-app: "#f0f2f5"
   kis-bg-card: "rgba(255,255,255,0.85)"
