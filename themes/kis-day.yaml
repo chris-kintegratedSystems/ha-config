@@ -2,6 +2,10 @@ kis-day:
   # HA standard variables
   primary-color: "#0088a8"
   accent-color: "#0088a8"
+  primary-background-color: "#f0f2f5"
+  secondary-background-color: "#f5f7fa"
+  mdc-theme-background: "#f0f2f5"
+  mdc-theme-surface: "#f5f7fa"
   app-header-background-color: "rgba(255,255,255,0.96)"
   ha-card-background: "rgba(255,255,255,0.85)"
   ha-card-border-color: "rgba(0,0,0,0.08)"

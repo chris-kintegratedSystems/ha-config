@@ -2,6 +2,10 @@ kis-night:
   # HA standard variables
   primary-color: "#00d4f0"
   accent-color: "#00d4f0"
+  primary-background-color: "#070910"
+  secondary-background-color: "#10151f"
+  mdc-theme-background: "#070910"
+  mdc-theme-surface: "#10151f"
   app-header-background-color: "#070910"
   ha-card-background: "rgba(16,21,31,0.72)"
   ha-card-border-color: "rgba(255,255,255,0.06)"
