@@ -2,6 +2,10 @@ kis-night:
   # HA standard variables
   primary-color: "#00d4f0"
   accent-color: "#00d4f0"
+  primary-background-color: "#070910"
+  secondary-background-color: "#10151f"
+  mdc-theme-background: "#070910"
+  mdc-theme-surface: "#10151f"
   app-header-background-color: "#070910"
   ha-card-background: "rgba(16,21,31,0.72)"
   ha-card-border-color: "rgba(255,255,255,0.06)"
@@ -17,6 +21,13 @@ kis-night:
   info-color: "#4d8ef0"
   state-icon-color: "#8a9ab8"
   lovelace-background: "#070910"
+  # HA sidebar variables
+  sidebar-background-color: "#10151f"
+  sidebar-text-color: "#8a9ab8"
+  sidebar-selected-text-color: "#00d4f0"
+  sidebar-selected-icon-color: "#00d4f0"
+  sidebar-icon-color: "#8a9ab8"
+  sidebar-menu-button-text-color: "#eef2f8"
   # KIS custom variables
   kis-bg-app: "#070910"
   kis-bg-card: "rgba(16,21,31,0.72)"
