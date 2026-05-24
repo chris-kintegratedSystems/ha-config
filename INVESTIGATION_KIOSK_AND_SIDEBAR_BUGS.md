@@ -1,55 +1,77 @@
 # Investigation: Kiosk Mode & Sidebar Bugs (Deferred)
 
-**Date:** 2026-05-07
+**Date:** 2026-05-07 (opened), 2026-05-24 (Bug 1 closed)
 **Investigator:** Claude Code
-**Status:** Deferred — two bugs documented, no fix shipped
+**Status:** Bug 1 CLOSED, Bug 2 open (mobilev2-only)
 
 ---
 
-## Bug 1: Kiosk CSS not applying on iPhone / Desktop browsers
+## Bug 1: Kiosk CSS not applying on certain devices — CLOSED 2026-05-24
 
-### Symptom
-When `input_boolean.kiosk_mode` is toggled OFF on the Tab S9 (via the
-Settings page toggle), the HA chrome (header + sidebar) appears correctly
-on iPad and Tab S9 but does NOT appear on iPhone HA Companion or desktop
-browsers.
+### Resolution
+ha-dashboard PR #84 (kis-nav.js v54 + v55), ha-config PR #52 (cache-bust
+to v55).
 
-### What we know
-- The `kiosk_mode:` block in dashboard_mobilev1.json was changed by PR #46:
-  ```json
-  "kiosk_mode": {
-    "hide_header": "[[[is_state('input_boolean.kiosk_mode', 'on')]]]",
-    "hide_sidebar": "[[[is_state('input_boolean.kiosk_mode', 'on')]]]"
-  }
-  ```
-- The `[[[...]]]` JS template syntax is evaluated by the kiosk-mode HACS
-  integration, which injects CSS into `ha-drawer`'s shadow root
-- The kiosk-mode integration IS installed on the Pi
-- Works on: iPad, Tab S9 (FKB)
-- Does NOT work on: iPhone HA Companion, desktop Chrome/Edge
+### Original symptom
+When `input_boolean.kiosk_mode` was toggled, kiosk CSS appeared to work
+on some devices (Galaxy Tab A9+ FKB, iPad Companion App) but not others
+(iPhone HA Companion, desktop Chrome/Edge). Original hypothesis was that
+the `[[[...]]]` kiosk-mode HACS template wasn't being re-evaluated
+per-device. That hypothesis was wrong.
 
-### Possible causes (not investigated)
-1. **Per-device evaluation:** kiosk-mode may cache its CSS injection
-   per-device and not re-evaluate when the entity changes on a different
-   device
-2. **Companion app caching:** iPhone HA Companion may cache the kiosk
-   CSS and not re-read the template on entity state change
-3. **`?kiosk` URL param residue:** If the iPhone Companion URL still
-   has `?kiosk`, native HA kiosk mode overrides the integration
-4. **Template evaluation timing:** The `[[[...]]]` syntax may only be
-   evaluated on dashboard load, not reactively on entity change
+### Actual root cause — two parts
 
-### Investigation needed
-- Check if iPhone Companion URL has `?kiosk` appended
-- Check kiosk-mode integration version and changelog for reactive
-  template support
-- Test: toggle entity, then force-reload iPhone Companion — does the
-  change appear?
-- Inspect kiosk-mode source for per-device vs global CSS injection
+**Part 1:** kis-nav.js never had a kiosk CSS engine through v53. Only
+kis-app-shell.js (mobilev2) implemented kiosk mode via `syncKioskMode`
+and `patchHALayout`. mobilev1's kiosk toggle existed in dashboard JSON
+but flipped `input_boolean.kiosk_mode` with no script on mobilev1
+listening. Devices that appeared to "work" were running mobilev2 or had
+stale mobilev2 CSS cached in their hui-root shadow DOM from a prior
+mobilev2 session. Devices that "broke" were on a clean mobilev1 with no
+kiosk engine.
+
+**Fix (v54):** Ported `syncKioskMode` and supporting functions into
+kis-nav.js with adaptations: inline `_kioskOriginals` capture with
+`isConnected` staleness guard, inverse `onV2Dashboard()` guard so
+mobilev1 owns kiosk on its pages while mobilev2 retains its existing
+behavior, CSS ID prefix `kis-kiosk-*` to avoid collision with mobilev2's
+`kisv2-kiosk-*`, boot-time pre-hide reads `localStorage` to prevent
+sidebar flash on load.
+
+**Part 2 (discovered post-v54):** kis-app-shell.js's `unpatchHALayout`
+strips shared host classes (`kis-kiosk-collapsed`, `kis-kiosk-hidden`)
+and inline styles (`--mdc-drawer-width`, `display:none`) on every
+`location-changed` event where `onV2Dashboard()` returns false — which
+includes all mobilev1 navigation. After the strip, kis-nav.js's
+`syncKioskMode` dedup blocked re-application because the entity state
+hadn't changed. Bug visibly manifested only on wide viewports (>870px:
+iPad landscape, desktop browser) because HA's drawer defaults to
+`type="modal"` below that breakpoint (sidebar hidden by default after
+strip) vs `type=""` above (sidebar reappears docked at ~255px). Tab A9+
+in FKB appeared fine only because the wall kiosk doesn't navigate between
+mobilev1 views in normal operation.
+
+**Fix (v55):** Dedup now checks both entity state AND class presence on
+drawer — if kiosk is supposed to be ON but `kis-kiosk-collapsed` class is
+missing, fall through and re-apply. Added `location-changed` and
+`popstate` listeners that trigger a microtask-deferred re-apply, beating
+the 1s polling tick.
+
+### Verification
+Tested on all four target devices: Tab A9+ FKB, iPad Companion App,
+iPhone 16 Pro Companion App, desktop browser (1920×1080). Full navigation
+cycle (Home → Climate → Lights → Cameras → Media → Settings → Home) with
+kiosk ON — no chrome reappear on any device.
 
 ---
 
-## Bug 2: Sidebar non-scrollable when HA chrome visible
+## Bug 2: Sidebar non-scrollable when HA chrome visible — OPEN (mobilev2-only)
+
+**Scope note (2026-05-24):** This bug only affects mobilev2
+(kis-app-shell.js). mobilev1 was never affected because kis-nav.js never
+ran the shadow DOM injection path into `ha-sidebar` that causes the
+scroll clipping. The fix attempted and reverted below was in the mobilev2
+code path.
 
 ### Symptom
 When `kiosk_mode` is OFF (HA header + sidebar visible), the sidebar's
