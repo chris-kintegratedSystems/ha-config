@@ -209,13 +209,16 @@ template:
         state: >
           {% set f = hourly['weather.forecast_home'].forecast[:12] %}
           {% set temps = f | map(attribute='temperature') | list %}
-          {% set precip = f | map(attribute='precipitation_probability') | list %}
+          {% set ns = namespace(precip=[]) %}
+          {% for item in f %}
+            {% set ns.precip = ns.precip + [item.precipitation_probability | default(0)] %}
+          {% endfor %}
           {{ state_attr('weather.forecast_home', 'temperature') }}°F now, high {{ temps | max }}°F, low {{ temps | min }}°F.
-          {% if precip | max > 20 %}Rain {{ precip | max }}% chance.{% else %}No rain.{% endif %}
+          {% if ns.precip | max > 20 %}Rain {{ ns.precip | max }}% chance.{% else %}No rain.{% endif %}
         attributes:
           hourly_detail: >
             {% for item in hourly['weather.forecast_home'].forecast[:12] %}
-            {{ as_timestamp(item.datetime) | timestamp_custom('%I%p', true) }}: {{ item.condition }}, {{ item.temperature }}°F, {{ item.precipitation_probability }}% rain;
+            {{ as_timestamp(item.datetime) | timestamp_custom('%I%p', true) }}: {{ item.condition }}, {{ item.temperature }}°F, {{ item.precipitation_probability | default(0) }}% rain;
             {% endfor %}
 
 # ─── RECORDER ────────────────────────────────────────────────────────────────
