@@ -67,6 +67,9 @@ input_boolean:
     name: Kiosk Mode
     initial: true
     icon: mdi:fullscreen
+  tars_sleep_mode:
+    name: "TARS Sleep Mode"
+    icon: mdi:sleep
 
 input_text:
   priority_camera_lock:
