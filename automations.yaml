@@ -820,3 +820,29 @@
         data:
           name: kis-night
   mode: single
+
+# ─── Voice Assistant — Continue Conversation ─────────────────────────────────
+# Re-opens satellite mic when Grok signals the conversation should continue,
+# so the user doesn't need to say the wake word for follow-up questions.
+
+- id: voice_continue_conversation
+  alias: "Voice - Continue Conversation"
+  description: >-
+    Re-opens mic when Grok signals conversation should continue
+  trigger:
+    - platform: event
+      event_type: assist_pipeline.run_end
+      event_data:
+        satellite_id: assist_satellite.satellite1_c5a540_assist_satellite
+  condition:
+    - condition: template
+      value_template: >
+        {{ trigger.event.data.get('intent_output', {})
+           .get('continue_conversation', false) }}
+  action:
+    - action: assist_satellite.start_conversation
+      target:
+        entity_id: assist_satellite.satellite1_c5a540_assist_satellite
+      data:
+        start_message: ""
+  mode: single

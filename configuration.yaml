@@ -188,6 +188,39 @@ template:
         unique_id: priority_camera
         state: "{{ states('input_text.priority_camera_lock') }}"
 
+  # Trigger-based template: calls weather.get_forecasts hourly so voice
+  # assistant (Grok) can answer forecast questions.
+  - trigger:
+      - trigger: time_pattern
+        hours: "/1"
+      - trigger: homeassistant
+        event: start
+    action:
+      - delay: "00:00:10"
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.forecast_home
+        data:
+          type: hourly
+        response_variable: hourly
+    sensor:
+      - name: "Todays Forecast Summary"
+        unique_id: todays_forecast_summary
+        state: >
+          {% set f = hourly['weather.forecast_home'].forecast[:12] %}
+          {% set temps = f | map(attribute='temperature') | list %}
+          {% set ns = namespace(precip=[]) %}
+          {% for item in f %}
+            {% set ns.precip = ns.precip + [item.precipitation_probability | default(0)] %}
+          {% endfor %}
+          {{ state_attr('weather.forecast_home', 'temperature') }}°F now, high {{ temps | max }}°F, low {{ temps | min }}°F.
+          {% if ns.precip | max > 20 %}Rain {{ ns.precip | max }}% chance.{% else %}No rain.{% endif %}
+        attributes:
+          hourly_detail: >
+            {% for item in hourly['weather.forecast_home'].forecast[:12] %}
+            {{ as_timestamp(item.datetime) | timestamp_custom('%I%p', true) }}: {{ item.condition }}, {{ item.temperature }}°F, {{ item.precipitation_probability | default(0) }}% rain;
+            {% endfor %}
+
 # ─── RECORDER ────────────────────────────────────────────────────────────────
 # Controls what gets written to your database (home-assistant_v2.db)
 # Goal: keep history meaningful, exclude noisy/useless entities
