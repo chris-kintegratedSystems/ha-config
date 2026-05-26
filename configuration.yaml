@@ -322,6 +322,10 @@ logbook:
       
 browser_mod:
 
+tts:
+  - platform: cartesia
+    voice: 228fca29-3a0a-435c-8728-5cb483251068
+
 # ─── CAMERAS ─────────────────────────────────────────────────────────────────
 # All 5 cameras (doorbell, nest_cam_1, nest_cam_2, nanit_benjamin,
 # nanit_travel) are now served by Frigate's embedded go2rtc.
