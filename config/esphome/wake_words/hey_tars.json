@@ -1,0 +1,16 @@
+{
+  "type": "micro",
+  "wake_word": "Hey TARS",
+  "author": "K Integrated Systems",
+  "website": "https://github.com/chris-kintegratedSystems/ha-config",
+  "model": "hey_tars.tflite",
+  "trained_languages": ["en"],
+  "version": 2,
+  "micro": {
+    "probability_cutoff": 0.75,
+    "sliding_window_size": 10,
+    "feature_step_size": 10,
+    "tensor_arena_size": 65536,
+    "minimum_esphome_version": "2025.12.7"
+  }
+}
