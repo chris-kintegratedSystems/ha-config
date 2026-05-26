@@ -1,7 +1,7 @@
 services:
   esphome:
     container_name: esphome
-    image: ghcr.io/esphome/esphome:latest
+    image: ghcr.io/esphome/esphome:2026.4.5
     restart: unless-stopped
     network_mode: host
     volumes:
