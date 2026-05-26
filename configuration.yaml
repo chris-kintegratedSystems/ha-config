@@ -340,7 +340,7 @@ rest_command:
     verify_ssl: false
 
 shell_command:
-  sleep_rtx5080: "ssh -i /config/.ssh/id_rsa -o StrictHostKeyChecking=no chris@192.168.51.54 'rundll32.exe powrprof.dll,SetSuspendState 0,1,0'"
+  sleep_rtx5080: "ssh -i /config/.ssh/id_rsa_gaming -o StrictHostKeyChecking=no chris@192.168.51.54 'rundll32.exe powrprof.dll,SetSuspendState 0,1,0'"
 
 # ─── CAMERAS ─────────────────────────────────────────────────────────────────
 # All 5 cameras (doorbell, nest_cam_1, nest_cam_2, nanit_benjamin,
