@@ -846,3 +846,72 @@
       data:
         start_message: ""
   mode: single
+- id: tars_wake_pc
+  alias: "TARS — Wake Gaming PC on Presence"
+  description: "Sends WOL magic packet to RTX 5080 when office or kitchen presence detected."
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.everything_presence_pro_2857fc_occupancy
+    - binary_sensor.everything_presence_pro_697c30_occupancy
+    to: "on"
+  conditions: []
+  actions:
+  - action: wake_on_lan.send_magic_packet
+    data:
+      mac: "A0:AD:9F:30:9D:50"
+      broadcast_address: "192.168.51.255"
+  mode: single
+  max_exceeded: silent
+- id: tars_sleep_pc
+  alias: "TARS — Sleep Gaming PC on No Presence"
+  description: >
+    Sleeps RTX 5080 when both presence sensors clear for 10 minutes
+    or TARS sleep mode is activated. Checks for active ARIA session first.
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.everything_presence_pro_2857fc_occupancy
+    - binary_sensor.everything_presence_pro_697c30_occupancy
+    to: "off"
+    for:
+      minutes: 10
+  - trigger: state
+    entity_id: input_boolean.tars_sleep_mode
+    to: "on"
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.everything_presence_pro_2857fc_occupancy
+    state: "off"
+  - condition: state
+    entity_id: binary_sensor.everything_presence_pro_697c30_occupancy
+    state: "off"
+  actions:
+  - action: rest_command.check_aria_session
+    response_variable: aria_status
+  - delay:
+      seconds: 5
+  - condition: template
+    value_template: >
+      {{ (aria_status.content | from_json).active_sessions | int(0) == 0 }}
+  - action: shell_command.sleep_rtx5080
+  mode: single
+  max_exceeded: silent
+- id: tars_sleep_mode_reset
+  alias: "TARS — Reset Sleep Mode on Presence"
+  description: "Turns off tars_sleep_mode when someone enters office or kitchen."
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.everything_presence_pro_2857fc_occupancy
+    - binary_sensor.everything_presence_pro_697c30_occupancy
+    to: "on"
+  conditions:
+  - condition: state
+    entity_id: input_boolean.tars_sleep_mode
+    state: "on"
+  actions:
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.tars_sleep_mode
+  mode: single
