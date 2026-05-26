@@ -95,7 +95,7 @@ external_components:
 
 aria_bridge:
   id: aria
-  bridge_url: "ws://192.168.51.179:8765/satellite"
+  bridge_url: "ws://192.168.51.179:8766/satellite"
   microphone_id: sat_mic
   speaker_id: sat_speaker
   sample_rate: 16000
