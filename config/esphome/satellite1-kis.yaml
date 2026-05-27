@@ -8,7 +8,8 @@
 # v11-13: send-path instrumentation, mic-drop counters, ws_send capped to 2048B (smooth, 0 drops), half-duplex turn-taking.
 # v14: TTS played at 48kHz — partial; v15: 48kHz STEREO (bridge sends stereo, set_audio_stream_info=16/2/48000) — I2S bus is stereo, mono played 2x fast. Chipmunk FIXED (Chris confirmed).
 # v16: ws_recv_frame_ rewritten with atomic recv_exact_ reads — fixes the frame DESYNC that
-#      mis-read stereo TTS as text frames -> read error -> TTS clipped at ~4s. TEMP autotest re-added to validate.
+#      mis-read stereo TTS as text frames -> read error -> TTS clipped at ~4s.
+# v16-clean: autotest stripped (acoustic harness uses the real wake-word path). recv fix + wifi-lock unchanged.
 #
 # Architecture: FPH packages handle XMOS co-processor, I2S bus, and audio
 # hardware. aria_bridge replaces voice_assistant for Grok integration.
@@ -26,23 +27,13 @@ esphome:
     board_build.flash_mode: dio
     board_build.flash_size: 16MB
   on_boot:
-    - priority: -100
-      then:
-        - logger.log: "KIS Satellite booting — waiting for XMOS + WiFi..."
-        - delay: 5s
-        - logger.log: "Starting wake word detection..."
-        - micro_wake_word.start:
-        - logger.log: "Listening for Hey Jarvis"
-    # === TEMP AUTOTEST (v16) — validate recv-parser fix; REMOVE once confirmed ===
-    - priority: -200
-      then:
-        - delay: 30s
-        - logger.log: "AUTOTEST: start_session (25s) — recv-parser validation"
-        - lambda: 'id(aria).start_session();'
-        - delay: 25s
-        - logger.log: "AUTOTEST: stop_session"
-        - lambda: 'id(aria).stop_session();'
-        - logger.log: "AUTOTEST: complete"
+    priority: -100
+    then:
+      - logger.log: "KIS Satellite booting — waiting for XMOS + WiFi..."
+      - delay: 5s
+      - logger.log: "Starting wake word detection..."
+      - micro_wake_word.start:
+      - logger.log: "Listening for Hey Jarvis"
 
 # --- FPH Hardware Packages ---
 # core_board: ESP32-S3 config, PSRAM, I2C, SPI, UART, I2S (duplex + secondary)
