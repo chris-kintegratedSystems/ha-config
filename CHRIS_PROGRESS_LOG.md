@@ -267,3 +267,37 @@ When deploying KIS satellite1 firmware to new clients:
 ### Why these exist as future phases
 
 Phase 1 (v17) gets single-turn voice working in a quiet room — the minimum viable voice assistant. Phase 2 and 3 are the work that makes it actually good (vs barely functional). Both are required before KIS client deployments — clients won't tolerate "works in a quiet room, fails when AC turns on."
+
+---
+
+## v17 (2026-05-27 ~16:00 CDT) — XMOS "dead" narrative REVERSED; real root cause is the mic format
+
+### ⚠️ Correction: the XMOS was never dead. Today's earlier "smoking gun" was a misread.
+- The boot log line `XMOS Firmware Version: XMOS not responding` is a **logging artifact**, NOT a failure. In `satellite1.cpp`, `status_string()` returns "XMOS not responding" for ANY non-connected state, and it's printed during `setup()` when state is always `SAT_DETACHED_STATE`. The actual version-read failure logs `"Requesting XMOS version failed"` (a WARN) — **that warning is absent from every boot log**.
+- The XMOS is **alive and at v1.0.3**: `on_xmos_connected` only fires after `check_for_xmos_()` confirms a non-zero version read (it fired), and `memory_flasher.match_embedded()` returned true (version == embedded v1.0.3).
+- **Lesson:** don't infer a hardware failure from one ambiguous log line. Read the component source / get ground-truth data before declaring a root cause. This misread cost two firmware build cycles.
+
+### v17 changes (KEEP — good defensive infra, but NOT today's fix)
+- Added `memory_flasher` (embed v1.0.3, verbatim from FPH base.yaml) + `http_request` dep + `on_xmos_connected` version-mismatch auto-flash, counter-guarded ≤3, to `satellite1-kis.yaml`. Branch `phase-aria/v17-xmos-flasher`.
+- It is harmless (correctly skips flashing since the XMOS already matches v1.0.3) and is the right defensive mechanism for future XMOS updates / blank-chip recovery (see KIS deployment runbook above). It did NOT fix the mic.
+
+### REAL root cause (verified, code-level): aria_bridge reads the mic at the wrong layer
+- FPH `sat1_microphone` delivers, to a **raw `add_data_callback`**: `int32` (32-bit), **stereo-interleaved**, 16 kHz (decimated 48→16k, not channel-aware). See `esphome/components/satellite1/microphone/sat1_microphone.cpp` (~line 232: `samples_read = bytes_read / sizeof(int32_t)`, delivers the int32 buffer).
+- FPH's audio consumers NEVER use that raw callback — `voice_assistant`/`micro_wake_word` use the `microphone:` sub-config (`channels: N` + `gain_factor: 6`) → ESPHome's MicrophoneSource wrapper extracts ONE channel, applies gain, outputs clean **16-bit mono**.
+- KIS's `aria_bridge` (`microphone_id: sat1_mics`) taps the **raw callback** and ships bytes unchanged; `bridge/main.py` reads them as **16-bit mono 16 kHz** (`np.int16`, `resample_16k_to_24k`). 32-bit-stereo → 16-bit-mono = scrambled bytes → the constant ~8000 that doesn't track speech → server_vad never fires → Phase-M force-commits noise → Grok hallucinates. **This explains the bridge-audio symptoms that were wrongly blamed on the XMOS.**
+
+### Audit deltas (FPH vs KIS), block by block
+1. **Mic consumption** — FPH: channel-select + gain + 16-bit (MicrophoneSource). KIS: raw int32 stereo callback, zero conversion. ← THE BUG.
+2. **micro_wake_word** — IDENTICAL (channels:1, gain_factor:6). Not a delta.
+3. **sat1_mics source** (48k/32bit/stereo/GPIO15/i2s_shared) — IDENTICAL.
+4. **i2s_audio (i2s_shared)** — IDENTICAL (core_board.yaml).
+5. **Speaker chain** — KIS = FPH minus the mixer + pcm5122 line-out DAC; `i2s_audio_speaker`(48k/32bit/stereo)+resampler(48k/16bit) match. Not a garble cause.
+6. **XMOS audio-pipeline init** — no explicit post-connect XMOS audio-config commands found in FPH (firmware auto-configures). No clear delta.
+
+### Still UNEXPLAINED (do not conflate with the mic-format bug)
+- The wake word did NOT fire on 2 clear playbacks in the v16 test, yet `micro_wake_word` config is correct (channels:1, gain:6 — identical to FPH, uses the proper wrapper, so it should get clean channel-1 audio). Open question: is the XMOS audio on channel 1 actually clean (XMOS DSP fine) or is there a deeper audio issue? Needs real ground-truth capture of channel 1 vs what aria_bridge ships.
+- avg_abs constant ~8000 even when nominally quiet — consistent with int32-as-int16 misread, but confirm with a byte-level capture of the satellite's mic frames.
+
+### Recommended next (firmware change — awaiting Chris's go)
+1. Capture real bridge mic bytes; confirm they are int32 (predicted by the code).
+2. Fix `aria_bridge` to extract one channel + convert int32→16-bit mono (replicate MicrophoneSource behavior: e.g., take channel 0 like voice_assistant, q31→int16), instead of shipping the raw callback bytes. Then retest wake + round-trip.
