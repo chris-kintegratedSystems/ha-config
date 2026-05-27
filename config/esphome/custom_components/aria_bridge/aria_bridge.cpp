@@ -392,11 +392,22 @@ void ARIABridge::send_task_(void *param) {
     }
 
     if (!to_send.empty()) {
-      uint32_t t0 = millis();
-      bool ok = self->ws_send_binary_(to_send.data(), to_send.size());
-      uint32_t dt = millis() - t0;  // v11: flag slow sends (criterion 4)
-      if (dt > 50)
-        ESP_LOGW(TAG, "ws_send slow: %ums for %u bytes", (unsigned) dt, (unsigned) to_send.size());
+      // v13: send in <=2048 B frames so each ws_send stays fast (criterion 4) and
+      // the bridge reads smaller, more frequent frames (smoother, less backpressure).
+      const size_t MAX_SEND = 2048;
+      bool ok = true;
+      for (size_t off = 0; off < to_send.size(); off += MAX_SEND) {
+        size_t n = to_send.size() - off;
+        if (n > MAX_SEND) n = MAX_SEND;
+        uint32_t t0 = millis();
+        ok = self->ws_send_binary_(to_send.data() + off, n);
+        uint32_t dt = millis() - t0;  // flag slow sends (criterion 4)
+        if (dt > 50)
+          ESP_LOGW(TAG, "ws_send slow: %ums for %u bytes", (unsigned) dt, (unsigned) n);
+        if (!ok)
+          break;
+        self->bytes_sent_ += n;
+      }
       if (!ok) {
         if (self->send_task_running_.load()) {
           ESP_LOGE(TAG, "Send task: WebSocket send failed");
@@ -404,7 +415,6 @@ void ARIABridge::send_task_(void *param) {
         }
         break;
       }
-      self->bytes_sent_ += to_send.size();
       self->last_activity_ms_ = millis();
     }
   }
