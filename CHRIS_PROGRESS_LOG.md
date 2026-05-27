@@ -65,6 +65,13 @@ Goal: fresh-boot idle ping <50ms, wake word → Grok voice round-trip → speake
 
 ## Iterations
 
+### v14 — 2026-05-27 ~09:33 CDT (chipmunk fix + clean build)
+- **Ear-test feedback:** TTS played as chipmunk/fast → ~3x too fast = 16kHz audio reaching the 48kHz I2S speaker without upsampling.
+- **Fix:** bridge now resamples Grok 24kHz→**48kHz** (new `resample_24k_to_48k`, both Grok-native + XTTS send paths) and the satellite `set_audio_stream_info(16,1,48000)` — plays at I2S-native 48kHz, correct pitch. No reliance on the in-path resampler doing 16→48.
+- **Also:** removed the on-boot autotest (clean build for Chris's real ear-test). Kept all v9-v13 fixes + instrumentation.
+- Bridge deployed + restarted (48kHz). Firmware = v14.
+- **Result:** _pending Chris ear-test_ (no autotest now; trigger via real wake word).
+
 ### v13 — 2026-05-27 ~09:25 CDT
 - **Change:** satellite send_task caps each ws_send to 2048 B (loop to drain) — smooths sends, breaks the backpressure spiral.
 - **Result:** ws_send >50ms 30+→**2** (max 114ms). 0 drops. Speaker plays. Heap stable. Clean turn-taking. Residual: close-time framing glitch (see caveat).

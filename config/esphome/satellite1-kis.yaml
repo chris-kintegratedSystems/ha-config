@@ -1,10 +1,12 @@
-# KIS Satellite1 v10 — FPH hardware + ARIA Bridge + Speaker
+# KIS Satellite1 v14 — FPH hardware + ARIA Bridge + Speaker
 # Wake word: "Hey Jarvis" → ARIA Bridge → Grok Realtime → TTS playback
 #
 # v5 → v6: Added TAS2780 speaker amp, I2S speaker output, resampler.
 # Bridge audio (16kHz/16bit/mono) is resampled to 48kHz for I2S bus.
 # v9: wifi power_save_mode=none — fixes idle ping latency floor (34ms→2ms).
-# v10: removed v9 temp diagnostics (on_boot autotest + heap monitor); power_save kept.
+# v10: removed v9 temp diagnostics; wifi fast_connect + post_connect_roaming=false (mesh lock, idle ping 74->12ms).
+# v11-13: send-path instrumentation, mic-drop counters, ws_send capped to 2048B (smooth, 0 drops), half-duplex turn-taking.
+# v14: TTS now played at 48kHz (bridge sends 48kHz, set_audio_stream_info=48kHz) — fixes chipmunk; autotest removed (clean ear-test).
 #
 # Architecture: FPH packages handle XMOS co-processor, I2S bus, and audio
 # hardware. aria_bridge replaces voice_assistant for Grok integration.
@@ -22,28 +24,13 @@ esphome:
     board_build.flash_mode: dio
     board_build.flash_size: 16MB
   on_boot:
-    - priority: -100
-      then:
-        - logger.log: "KIS Satellite booting — waiting for XMOS + WiFi..."
-        - delay: 5s
-        - logger.log: "Starting wake word detection..."
-        - micro_wake_word.start:
-        - logger.log: "Listening for Hey Jarvis"
-    # === TEMP AUTOTEST (v11) — instrumented session test; REMOVE for final ===
-    - priority: -200
-      then:
-        - delay: 30s
-        - lambda: |-
-            ESP_LOGI("autotest", "heap pre-session: %u", esp_get_free_heap_size());
-        - logger.log: "AUTOTEST: start_session (10s)"
-        - lambda: 'id(aria).start_session();'
-        - delay: 10s
-        - logger.log: "AUTOTEST: stop_session"
-        - lambda: 'id(aria).stop_session();'
-        - delay: 2s
-        - lambda: |-
-            ESP_LOGI("autotest", "heap post-session: %u", esp_get_free_heap_size());
-        - logger.log: "AUTOTEST: complete"
+    priority: -100
+    then:
+      - logger.log: "KIS Satellite booting — waiting for XMOS + WiFi..."
+      - delay: 5s
+      - logger.log: "Starting wake word detection..."
+      - micro_wake_word.start:
+      - logger.log: "Listening for Hey Jarvis"
 
 # --- FPH Hardware Packages ---
 # core_board: ESP32-S3 config, PSRAM, I2C, SPI, UART, I2S (duplex + secondary)
