@@ -81,6 +81,10 @@ globals:
     type: int
     restore_value: no
     initial_value: '0'
+  - id: xmos_flash_attempts          # v17: cap XMOS auto-flash retries (loop-safety; 3 then stop)
+    type: int
+    restore_value: yes
+    initial_value: '0'
 
 # --- XMOS Co-Processor Init (SPI handshake + reset) ---
 satellite1:
@@ -91,11 +95,84 @@ satellite1:
   spi_mode: MODE3
   xmos_rst_pin: GPIO4
   on_xmos_connected:
+    # This device fires on_xmos_connected (I2S clocks present) even when the XMOS app
+    # firmware version is unreadable — so the flash trigger must live HERE on the
+    # version-mismatch path (FPH's pattern), not only on on_xmos_no_response.
     - logger.log: "XMOS connected — I2S clocks active"
+    - if:
+        condition:
+          lambda: 'return id(xflash).has_image_embedded() && !id(xflash).match_embedded(id(satellite1_id).xmos_fw_version);'
+        then:
+          # version mismatch / unreadable — flash embedded v1.0.3 (max 3 attempts)
+          - if:
+              condition:
+                lambda: 'return id(xmos_flash_attempts) < 3;'
+              then:
+                - lambda: 'id(xmos_flash_attempts) += 1;'
+                - logger.log:
+                    format: "XMOS auto-flash (version mismatch): attempt %d/3 — writing embedded v1.0.3"
+                    args: ['id(xmos_flash_attempts)']
+                - memory_flasher.write_embedded_image:
+              else:
+                - logger.log:
+                    level: ERROR
+                    format: "XMOS auto-flash: stopped after %d attempts — manual intervention needed"
+                    args: ['id(xmos_flash_attempts)']
+        else:
+          # version matches embedded image — XMOS is healthy, reset the retry counter
+          - logger.log: "XMOS firmware matches embedded v1.0.3 — up to date"
+          - globals.set:
+              id: xmos_flash_attempts
+              value: '0'
   on_xmos_no_response:
     - logger.log:
         level: ERROR
         format: "XMOS not responding — I2S clocks may be absent"
+    - if:                            # v17: auto-flash embedded XMOS image (max 3 attempts, then stop)
+        condition:
+          lambda: 'return id(xmos_flash_attempts) < 3 && id(xflash).has_image_embedded();'
+        then:
+          - lambda: 'id(xmos_flash_attempts) += 1;'
+          - logger.log:
+              format: "XMOS auto-flash: attempt %d/3 — writing embedded v1.0.3 image"
+              args: ['id(xmos_flash_attempts)']
+          - memory_flasher.write_embedded_image:
+        else:
+          - logger.log:
+              level: ERROR
+              format: "XMOS auto-flash: stopped (attempts=%d / no embedded image) — manual intervention needed"
+              args: ['id(xmos_flash_attempts)']
+
+http_request:                        # v17: required dependency of memory_flasher
+
+# --- v17: XMOS firmware flasher ---
+# embed_flash_image copied VERBATIM from FPH satellite1.base.yaml (staging, v1.0.3).
+# memory_flasher component is registered via the imported components.external package.
+# Callbacks reduced to logging (FPH's LED/factory-reset refs aren't in this minimal config).
+# Triggered from satellite1.on_xmos_no_response above (guarded by xmos_flash_attempts < 3).
+memory_flasher:
+  - platform: satellite1
+    id: xflash
+    embed_flash_image:
+      image_version: ${xmos_fw_version}
+      image_file: https://raw.githubusercontent.com/FutureProofHomes/Documentation/refs/heads/main/assets/firmware/xmos/${xmos_fw_version}/satellite1_firmware_fixed_delay.factory.bin
+      md5_file: https://raw.githubusercontent.com/FutureProofHomes/Documentation/refs/heads/main/assets/firmware/xmos/${xmos_fw_version}/satellite1_firmware_fixed_delay.factory.md5
+    on_flashing_start:
+      then:
+        - logger.log: "XMOS flash: START"
+    on_progress_update:
+      then:
+        - logger.log:
+            format: "XMOS flash: progress %d%%"
+            args: ['(int) id(xflash).flashing_progress']
+    on_flashing_success:
+      then:
+        - logger.log: "XMOS flash: SUCCESS — XMOS will reboot"
+    on_flashing_failed:
+      then:
+        - logger.log:
+            level: ERROR
+            format: "XMOS flash: FAILED"
 
 # --- USB-C Power Delivery + TAS2780 Activation ---
 fusb302b:
