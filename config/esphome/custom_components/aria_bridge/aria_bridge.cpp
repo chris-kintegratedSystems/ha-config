@@ -329,7 +329,9 @@ int ARIABridge::ws_recv_frame_(uint8_t *buf, size_t max_len) {
     std::string msg(reinterpret_cast<char *>(buf), total);
     ESP_LOGI(TAG, "Bridge status: %s", msg.c_str());
     if (msg.find("\"done\"") != std::string::npos) {
-      this->state_ = BridgeState::STREAMING;
+      this->state_ = BridgeState::STREAMING;  // ARIA finished — resume mic
+    } else if (msg.find("\"processing\"") != std::string::npos) {
+      this->state_ = BridgeState::RECEIVING;  // v12: pause mic, listen for TTS (half-duplex)
     } else if (msg.find("\"timeout\"") != std::string::npos) {
       return -1;
     }

@@ -24,11 +24,25 @@ Goal: fresh-boot idle ping <50ms, wake word → Grok voice round-trip → speake
 
 ## Iterations
 
+### v12 — 2026-05-27 ~09:10 CDT (turn-taking)
+- **Findings from v11 + bridge chunking:** mic-capture-during-speech is clean (0 drops); round-trip to Grok works; **but the session closes ~6s in and TTS never plays.** Root cause: continuous full-duplex streaming (autotest streams mic the whole time, even while ARIA should be responding) → contention + the bridge keeps forwarding post-commit mic to Grok → Grok ends the turn / session dies; big send stalls (7.5s) + drops.
+- **Fix (half-duplex turn-taking, 2 parts):**
+  - Bridge (deployed): after the manual commit, gate mic→Grok until response.done; send `{"type":"processing"}` to the satellite. On response.done, ungate + send `{"type":"done"}`.
+  - Satellite (v12 firmware): on `"processing"` → state=RECEIVING (pause mic send, keep receiving+playing TTS); on `"done"` → STREAMING (resume). One-line recv handler.
+- Kept: bridge 1024B chunking (fixed the recv-buffer crash), power_save_mode, wifi-lock.
+- **Result:** _pending build+flash+capture_ — expect: processing→pause→TTS plays (speaker writes)→done→resume, no read error, low drops.
+
 ### v11 — 2026-05-27 ~08:45 CDT
 - **Goal:** measure session criteria (3,4,6,7,8) now that idle ping (1) is fixed.
 - **Change:** aria_bridge.cpp/.h instrumentation — per-session `mic_dropped_bytes_` + `bytes_sent_` counters (logged once at stop_session, replacing per-drop spam), and `ws_send_binary_` timing (WARN if a send >50ms, criterion 4). YAML: re-added TEMP autotest (one 10s session at boot+30s, heap before/after). Keep v10 wifi-lock + power_save.
-- **Result:** _pending build+flash+capture_
-- Next: read session stats (drops/sent), slow-send warnings, bridge journal round-trip (response.audio.delta + relay back), heap delta.
+- **Result:** ✅ Big improvements + found the return-path bug.
+  - ✅ **Mic drops: 0** (sent=884736, dropped=0) — WiFi-lock eliminated the v9 267-drop problem.
+  - ✅ Heap pre=post=7104336 — zero leak.
+  - ✅ Round-trip outbound: audio→Grok (avg_abs ~8000), Grok returns response.audio.delta.
+  - ⚠️ 3 ws_send slow warnings (54/231/93ms) — occasional, minor.
+  - ❌ **Session closes ~6-7s in (`WebSocket read error — stopping`), right as Grok audio returns → TTS never plays (no speaker writes).**
+- **ROOT CAUSE (return path):** bridge sends each Grok-native `response.audio.delta` as ONE big WS binary frame (~17920 B). Satellite `ws_recv_frame_` has a 2048 B buffer → large frames hit the discard path, which `return -1` on EAGAIN when the frame arrives fragmented → false "read error" → session dies. Satellite never plays TTS. (The bridge's XTTS path already chunks to 1024 B; the Grok-native path doesn't — that's the bug.)
+- **Fix (v12, bridge-side, evidence-forced):** chunk Grok-native audio sends to ≤1024 B in relay_grok_to_satellite (match the XTTS pattern). Low-risk, no firmware change; satellite already plays small binary frames. Phase M manual-commit untouched.
 
 ### v10 — 2026-05-27 ~08:15 CDT (extended autonomous scope)
 - Power-source ruled out: wall-PD ping (avg 99.7ms) ≈ USB ping (avg 73.8ms), same spikes. Stalls are mesh/AP-side.
