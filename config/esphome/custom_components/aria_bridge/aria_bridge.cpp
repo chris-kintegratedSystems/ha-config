@@ -443,7 +443,7 @@ void ARIABridge::start_session() {
 
 #ifdef USE_SPEAKER
   if (this->spk_ != nullptr) {
-    this->spk_->set_audio_stream_info(audio::AudioStreamInfo(16, 1, 48000));  // bridge now sends 48kHz (matches I2S speaker)
+    this->spk_->set_audio_stream_info(audio::AudioStreamInfo(16, 2, 48000));  // bridge sends 48kHz STEREO (I2S bus is stereo)
   }
 #endif
 

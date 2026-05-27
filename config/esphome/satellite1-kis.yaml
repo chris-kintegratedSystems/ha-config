@@ -24,13 +24,23 @@ esphome:
     board_build.flash_mode: dio
     board_build.flash_size: 16MB
   on_boot:
-    priority: -100
-    then:
-      - logger.log: "KIS Satellite booting — waiting for XMOS + WiFi..."
-      - delay: 5s
-      - logger.log: "Starting wake word detection..."
-      - micro_wake_word.start:
-      - logger.log: "Listening for Hey Jarvis"
+    - priority: -100
+      then:
+        - logger.log: "KIS Satellite booting — waiting for XMOS + WiFi..."
+        - delay: 5s
+        - logger.log: "Starting wake word detection..."
+        - micro_wake_word.start:
+        - logger.log: "Listening for Hey Jarvis"
+    # === TEMP AUTOTEST (v15 verify) — REMOVE for clean build ===
+    - priority: -200
+      then:
+        - delay: 30s
+        - logger.log: "AUTOTEST: start_session (12s)"
+        - lambda: 'id(aria).start_session();'
+        - delay: 12s
+        - logger.log: "AUTOTEST: stop_session"
+        - lambda: 'id(aria).stop_session();'
+        - logger.log: "AUTOTEST: complete"
 
 # --- FPH Hardware Packages ---
 # core_board: ESP32-S3 config, PSRAM, I2C, SPI, UART, I2S (duplex + secondary)
