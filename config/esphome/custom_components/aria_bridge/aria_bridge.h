@@ -66,6 +66,10 @@ class ARIABridge : public Component {
   static constexpr uint32_t SESSION_TIMEOUT_MS = 30000;
   static constexpr size_t MAX_MIC_BUFFER_BYTES = 65536;
 
+  // v11: per-session comms stats (logged at stop_session)
+  std::atomic<uint32_t> mic_dropped_bytes_{0};
+  std::atomic<uint32_t> bytes_sent_{0};
+
   std::vector<uint8_t, ExternalRAMAllocator<uint8_t>> mic_buffer_;
   std::mutex mic_mutex_;
 };

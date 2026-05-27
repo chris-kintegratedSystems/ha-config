@@ -24,12 +24,19 @@ Goal: fresh-boot idle ping <50ms, wake word → Grok voice round-trip → speake
 
 ## Iterations
 
+### v11 — 2026-05-27 ~08:45 CDT
+- **Goal:** measure session criteria (3,4,6,7,8) now that idle ping (1) is fixed.
+- **Change:** aria_bridge.cpp/.h instrumentation — per-session `mic_dropped_bytes_` + `bytes_sent_` counters (logged once at stop_session, replacing per-drop spam), and `ws_send_binary_` timing (WARN if a send >50ms, criterion 4). YAML: re-added TEMP autotest (one 10s session at boot+30s, heap before/after). Keep v10 wifi-lock + power_save.
+- **Result:** _pending build+flash+capture_
+- Next: read session stats (drops/sent), slow-send warnings, bridge journal round-trip (response.audio.delta + relay back), heap delta.
+
 ### v10 — 2026-05-27 ~08:15 CDT (extended autonomous scope)
 - Power-source ruled out: wall-PD ping (avg 99.7ms) ≈ USB ping (avg 73.8ms), same spikes. Stalls are mesh/AP-side.
 - **Change:** removed v9 temp diagnostics (autotest + heap monitor); kept `power_save_mode: none`; **added `fast_connect: true` + `post_connect_roaming: false`** to lock the device to one Casadekup mesh BSSID and stop roaming churn (steady-state stall hypothesis).
 - Flash: USB COM6 (esptool). Branch `phase-aria/v10-cleanup`.
-- **Result:** _pending build+flash+60s ping_
-- Next: if idle spikes shrink → keep; if not → revert roaming flags, mark ping "best-effort, mesh-side", continue on other criteria.
+- **Result:** ✅ **WORKED.** Idle ping (60s, serial-closed, USB power): avg **19.2ms** (was 73.8ms), min 0.94ms, max 290ms, 0% loss. The steady-state stalls WERE mesh roaming churn (unlogged background roaming); locking to one BSSID via fast_connect + post_connect_roaming=false fixed it. **Criterion 1 (idle ping <50ms avg/60s) MET.** One residual ~290ms blip remains (rare).
+- v10 flashed via COM6, hash verified, clean boot, reachable.
+- Next: session criteria (round-trip, mic drops, ws_send timing, speaker writes) — need a test-session harness since v10 has no autotest. Plan v11 = re-add instrumented autotest + ws_send timing + mic-drop counter.
 
 ### v9 — 2026-05-27 ~06:55 CDT
 - **Hypothesis:** idle choke = ESPHome default WiFi power-save (light) on ESP32. Latency tracked USB-serial state (USB blocks light-sleep). No FPH PM/light-sleep config found, so power_save is at ESPHome default.

@@ -21,7 +21,7 @@ void ARIABridge::setup() {
       return;
     std::lock_guard<std::mutex> lock(this->mic_mutex_);
     if (this->mic_buffer_.size() + data.size() > MAX_MIC_BUFFER_BYTES) {
-      ESP_LOGW(TAG, "Mic buffer full — dropping %u bytes", (unsigned) data.size());
+      this->mic_dropped_bytes_ += data.size();  // v11: count, don't spam-log per drop
       return;
     }
     this->mic_buffer_.insert(this->mic_buffer_.end(), data.begin(), data.end());
@@ -390,13 +390,19 @@ void ARIABridge::send_task_(void *param) {
     }
 
     if (!to_send.empty()) {
-      if (!self->ws_send_binary_(to_send.data(), to_send.size())) {
+      uint32_t t0 = millis();
+      bool ok = self->ws_send_binary_(to_send.data(), to_send.size());
+      uint32_t dt = millis() - t0;  // v11: flag slow sends (criterion 4)
+      if (dt > 50)
+        ESP_LOGW(TAG, "ws_send slow: %ums for %u bytes", (unsigned) dt, (unsigned) to_send.size());
+      if (!ok) {
         if (self->send_task_running_.load()) {
           ESP_LOGE(TAG, "Send task: WebSocket send failed");
           self->state_ = BridgeState::ERROR;
         }
         break;
       }
+      self->bytes_sent_ += to_send.size();
       self->last_activity_ms_ = millis();
     }
   }
@@ -415,6 +421,8 @@ void ARIABridge::start_session() {
   this->state_ = BridgeState::CONNECTING;
   this->session_start_ms_ = millis();
   this->last_activity_ms_ = millis();
+  this->mic_dropped_bytes_ = 0;  // v11: reset per-session stats
+  this->bytes_sent_ = 0;
 
   {
     std::lock_guard<std::mutex> lock(this->mic_mutex_);
@@ -439,6 +447,8 @@ void ARIABridge::start_session() {
 void ARIABridge::stop_session() {
   ESP_LOGI(TAG, "Stopping ARIA session (duration: %lums)",
            (unsigned long)(millis() - this->session_start_ms_));
+  ESP_LOGI(TAG, "Session stats: sent=%u bytes, dropped=%u bytes",
+           (unsigned) this->bytes_sent_.load(), (unsigned) this->mic_dropped_bytes_.load());
   this->send_task_running_ = false;
   TaskHandle_t h = this->send_task_handle_.load();
   if (h != nullptr)
