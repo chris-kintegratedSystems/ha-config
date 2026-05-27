@@ -73,6 +73,7 @@ class ARIABridge : public Component {
 
   std::vector<uint8_t, ExternalRAMAllocator<uint8_t>> mic_buffer_;
   std::mutex mic_mutex_;
+  std::vector<uint8_t> spk_pending_;  // v18: speaker bytes not yet accepted (backpressure, no drop)
 };
 
 }  // namespace aria_bridge

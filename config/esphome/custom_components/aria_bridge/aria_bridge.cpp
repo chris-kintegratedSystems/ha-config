@@ -55,22 +55,46 @@ void ARIABridge::loop() {
     return;
   }
 
-  // Receive bridge audio (send moved to send_task_)
+  // Receive bridge audio (send moved to send_task_).
+  // v18 drain fix: feed the speaker with as many WS frames as are available per loop() iteration.
+  // Previously one ~5ms frame/loop fed ~3x slower than real-time -> the 500ms speaker buffer
+  // underran -> stutter. spk_pending_ holds any bytes the buffer couldn't accept (backpressure;
+  // no drop, no blocking — we just stop reading until the buffer drains).
   if (this->sock_fd_ >= 0) {
-    uint8_t buf[2048];
-    int len = this->ws_recv_frame_(buf, sizeof(buf));
-    if (len > 0) {
 #ifdef USE_SPEAKER
-      if (this->spk_ != nullptr) {
-        this->spk_->start();
-        this->spk_->play(buf, static_cast<size_t>(len));
-      }
+    if (this->spk_ != nullptr && !this->spk_pending_.empty()) {
+      this->spk_->start();
+      size_t w = this->spk_->play(this->spk_pending_.data(), this->spk_pending_.size());
+      if (w > 0)
+        this->spk_pending_.erase(this->spk_pending_.begin(), this->spk_pending_.begin() + w);
+    }
+    bool can_read = (this->spk_ == nullptr) || this->spk_pending_.empty();
+#else
+    bool can_read = true;
 #endif
-      this->last_activity_ms_ = now;
-      this->state_ = BridgeState::RECEIVING;
-    } else if (len < 0) {
-      ESP_LOGE(TAG, "WebSocket read error — stopping");
-      this->stop_session();
+    uint8_t buf[2048];
+    for (int n = 0; n < 24 && can_read; n++) {
+      int len = this->ws_recv_frame_(buf, sizeof(buf));
+      if (len > 0) {
+        this->last_activity_ms_ = now;
+        this->state_ = BridgeState::RECEIVING;
+#ifdef USE_SPEAKER
+        if (this->spk_ != nullptr) {
+          this->spk_->start();
+          size_t w = this->spk_->play(buf, static_cast<size_t>(len));
+          if (w < static_cast<size_t>(len)) {
+            this->spk_pending_.assign(buf + w, buf + len);  // hold remainder; stop reading (backpressure)
+            break;
+          }
+        }
+#endif
+      } else if (len < 0) {
+        ESP_LOGE(TAG, "WebSocket read error — stopping");
+        this->stop_session();
+        break;
+      } else {
+        break;  // no more WS frames available this iteration
+      }
     }
   }
 }
@@ -476,6 +500,7 @@ void ARIABridge::stop_session() {
     this->spk_->finish();
   }
 #endif
+  this->spk_pending_.clear();  // v18: drop any held speaker remainder so it can't leak to the next session
   this->state_ = BridgeState::IDLE;
 }
 
