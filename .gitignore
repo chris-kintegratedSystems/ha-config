@@ -6,3 +6,5 @@ home-assistant_v2.db-wal
 backups/
 *.log
 .cloud/
+
+.sat-diag/

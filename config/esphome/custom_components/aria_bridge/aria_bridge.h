@@ -1,11 +1,17 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/helpers.h"
 #include "esphome/components/microphone/microphone.h"
+#ifdef USE_SPEAKER
 #include "esphome/components/speaker/speaker.h"
+#endif
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <string>
 #include <vector>
 #include <mutex>
+#include <atomic>
 
 namespace esphome {
 namespace aria_bridge {
@@ -27,31 +33,40 @@ class ARIABridge : public Component {
   void set_bridge_url(const std::string &url) { this->bridge_url_ = url; }
   void set_sample_rate(int rate) { this->sample_rate_ = rate; }
   void set_microphone(microphone::Microphone *mic) { this->mic_ = mic; }
+#ifdef USE_SPEAKER
   void set_speaker(speaker::Speaker *spk) { this->spk_ = spk; }
+#endif
 
   void start_session();
   void stop_session();
   bool is_active() const { return this->state_ != BridgeState::IDLE; }
 
  protected:
+  static void connect_task_(void *param);
+  static void send_task_(void *param);
   bool tcp_connect_();
   bool ws_handshake_();
   void ws_disconnect_();
-  void ws_send_binary_(const uint8_t *data, size_t len);
+  bool ws_send_binary_(const uint8_t *data, size_t len);
   int ws_recv_frame_(uint8_t *buf, size_t max_len);
   bool parse_url_(std::string &host, uint16_t &port, std::string &path);
 
   std::string bridge_url_;
   int sample_rate_{16000};
   microphone::Microphone *mic_{nullptr};
+#ifdef USE_SPEAKER
   speaker::Speaker *spk_{nullptr};
-  int sock_fd_{-1};
-  BridgeState state_{BridgeState::IDLE};
-  uint32_t last_activity_ms_{0};
+#endif
+  std::atomic<int> sock_fd_{-1};
+  std::atomic<BridgeState> state_{BridgeState::IDLE};
+  std::atomic<uint32_t> last_activity_ms_{0};
   uint32_t session_start_ms_{0};
+  std::atomic<TaskHandle_t> send_task_handle_{nullptr};
+  std::atomic<bool> send_task_running_{false};
   static constexpr uint32_t SESSION_TIMEOUT_MS = 30000;
+  static constexpr size_t MAX_MIC_BUFFER_BYTES = 65536;
 
-  std::vector<uint8_t> mic_buffer_;
+  std::vector<uint8_t, ExternalRAMAllocator<uint8_t>> mic_buffer_;
   std::mutex mic_mutex_;
 };
 

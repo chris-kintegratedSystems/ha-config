@@ -1,11 +1,17 @@
-# KIS Satellite1 — FutureProofHomes ESP32-S3 Voice Satellite
-# Wake word: "Hey Jarvis" → ARIA Bridge → Grok Realtime
+# KIS Satellite1 v6 — FPH hardware + ARIA Bridge + Speaker
+# Wake word: "Hey Jarvis" → ARIA Bridge → Grok Realtime → TTS playback
 #
-# Architecture: satellite is dumb hardware (mic, speaker, wake word).
-# All intelligence lives in the bridge at wss://192.168.51.179:8765/satellite
+# v5 → v6: Added TAS2780 speaker amp, I2S speaker output, resampler.
+# Bridge audio (16kHz/16bit/mono) is resampled to 48kHz for I2S bus.
+#
+# Architecture: FPH packages handle XMOS co-processor, I2S bus, and audio
+# hardware. aria_bridge replaces voice_assistant for Grok integration.
 #
 # Hardware: FPH Satellite1 v0.1.5 — XMOS XU316 is I2S master.
 # ESP32-S3 runs in I2S secondary (slave) mode on a shared duplex bus.
+
+substitutions:
+  xmos_fw_version: v1.0.3
 
 esphome:
   name: satellite1-kis
@@ -13,28 +19,41 @@ esphome:
   platformio_options:
     board_build.flash_mode: dio
     board_build.flash_size: 16MB
+  on_boot:
+    priority: -100
+    then:
+      - logger.log: "KIS Satellite booting — waiting for XMOS + WiFi..."
+      - delay: 5s
+      - logger.log: "Starting wake word detection..."
+      - micro_wake_word.start:
+      - logger.log: "Listening for Hey Jarvis"
 
-esp32:
-  board: esp32-s3-devkitc-1
-  variant: esp32s3
-  flash_size: 16MB
-  framework:
-    type: esp-idf
-    version: recommended
-    sdkconfig_options:
-      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
-      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+# --- FPH Hardware Packages ---
+# core_board: ESP32-S3 config, PSRAM, I2C, SPI, UART, I2S (duplex + secondary)
+# components.external: FPH custom components (satellite1, i2s_audio, tas2780, etc.)
+packages:
+  hardware:
+    url: &repo https://github.com/futureproofhomes/satellite1-esphome
+    ref: &ref staging
+    refresh: 1s
+    files:
+      - config/common/core_board.yaml
+      - path: config/common/components.external.yaml
+        vars:
+          ext_comp_repo_url: https://github.com/futureproofhomes/satellite1-esphome
+          ext_comp_repo_ref: staging
 
-psram:
-  mode: octal
-  speed: 80MHz
+# --- KIS Custom Component ---
+external_components:
+  - source:
+      type: local
+      path: custom_components
+    components: [aria_bridge]
 
 logger:
-  level: INFO
+  level: DEBUG
 
 api:
-  encryption:
-    key: !secret satellite1_api_key
 
 ota:
   - platform: esphome
@@ -44,64 +63,111 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
 
-# --- Audio Hardware (FPH Satellite1 pinout — XMOS is I2S master) ---
+safe_mode:
 
-i2s_audio:
-  - id: i2s_shared
-    i2s_lrclk_pin: GPIO7
-    i2s_bclk_pin: GPIO8
-    i2s_mclk_pin: GPIO16
+# --- TAS2780 Power Tracking ---
+globals:
+  - id: pd_power_contract
+    type: int
+    restore_value: no
+    initial_value: '0'
 
+# --- XMOS Co-Processor Init (SPI handshake + reset) ---
+satellite1:
+  id: satellite1_id
+  spi_id: spi_0
+  cs_pin: GPIO10
+  data_rate: 8000000
+  spi_mode: MODE3
+  xmos_rst_pin: GPIO4
+  on_xmos_connected:
+    - logger.log: "XMOS connected — I2S clocks active"
+  on_xmos_no_response:
+    - logger.log:
+        level: ERROR
+        format: "XMOS not responding — I2S clocks may be absent"
+
+# --- USB-C Power Delivery + TAS2780 Activation ---
+fusb302b:
+  id: pd_fusb302b
+  irq_pin: GPIO1
+  request_voltage: 20
+  on_power_ready:
+    then:
+      - lambda: id(pd_power_contract) = id(pd_fusb302b).contract_voltage;
+      - logger.log:
+          format: "PD contract accepted: %dV — activating TAS2780"
+          args: ['id(pd_power_contract)']
+      - tas2780.activate:
+          mode: !lambda 'return id(pd_power_contract) >= 9 ? 2 : 0;'
+
+# --- Microphone (FPH satellite1 platform) ---
+# XMOS delivers 48kHz/32-bit/stereo; Sat1Microphone downsamples to 16kHz mono
 microphone:
-  - platform: i2s_audio
-    id: sat_mic
-    i2s_audio_id: i2s_shared
+  - platform: satellite1
+    id: sat1_mics
+    sample_rate: 48000
     i2s_din_pin: GPIO15
-    adc_type: external
+    bits_per_sample: 32bit
+    channel: stereo
     pdm: false
-    bits_per_sample: 16bit
-    sample_rate: 16000
+    adc_type: external
+    i2s_audio_id: i2s_shared
 
+# --- DAC Chain (TAS2780 speaker amp + proxy) ---
+audio_dac:
+  - platform: tas2780
+    id: speaker_dac
+    address: 0x3F
+  - platform: satellite1
+    id: dac_proxy
+    speaker_dac: speaker_dac
+
+# --- Speaker Output (I2S → resampler for bridge audio) ---
 speaker:
   - platform: i2s_audio
-    id: sat_speaker
-    i2s_audio_id: i2s_shared
+    id: i2s_audio_speaker
+    sample_rate: 48000
     i2s_dout_pin: GPIO9
+    bits_per_sample: 32bit
+    i2s_audio_id: i2s_shared
     dac_type: external
-    bits_per_sample: 16bit
-    sample_rate: 16000
+    channel: stereo
+    timeout: never
+    audio_dac: dac_proxy
+  - platform: resampler
+    id: sat1_speaker
+    output_speaker: i2s_audio_speaker
+    sample_rate: 48000
+    bits_per_sample: 16
 
 # --- Wake Word Detection ---
-
 micro_wake_word:
   models:
     - model: hey_jarvis
+  vad:
+  microphone:
+    microphone: sat1_mics
+    channels: 1
+    gain_factor: 6
+  stop_after_detection: false
   on_wake_word_detected:
-    then:
-      - logger.log: "Wake word detected — starting ARIA session"
-      - light.turn_on:
-          id: led_ring
-          effect: "Listening"
-      - lambda: |-
-          auto *bridge = id(aria);
-          bridge->start_session();
+    - logger.log: "Wake word detected — starting ARIA session"
+    - light.turn_on:
+        id: led_ring
+        effect: "Listening"
+    - lambda: |-
+        id(aria).start_session();
 
-# --- ARIA Bridge Component ---
-
-external_components:
-  - source:
-      type: local
-      path: custom_components
-
+# --- ARIA Bridge (mic + speaker via resampler) ---
 aria_bridge:
   id: aria
   bridge_url: "ws://192.168.51.179:8766/satellite"
-  microphone_id: sat_mic
-  speaker_id: sat_speaker
+  microphone_id: sat1_mics
+  speaker_id: sat1_speaker
   sample_rate: 16000
 
 # --- LED Ring (24x WS2812, GPIO21) ---
-
 light:
   - platform: esp32_rmt_led_strip
     id: led_ring
