@@ -20,13 +20,36 @@ esphome:
     board_build.flash_mode: dio
     board_build.flash_size: 16MB
   on_boot:
-    priority: -100
+    - priority: -100
+      then:
+        - logger.log: "KIS Satellite booting — waiting for XMOS + WiFi..."
+        - delay: 5s
+        - logger.log: "Starting wake word detection..."
+        - micro_wake_word.start:
+        - logger.log: "Listening for Hey Jarvis"
+    # === TEMP AUTOTEST (v9) — REMOVE before Phase 1 done ===
+    # Verifies connect_task_/send_task_ spawn + bridge connect without a wake word.
+    - priority: -200
+      then:
+        - delay: 75s
+        - lambda: |-
+            ESP_LOGI("autotest", "Heap pre-session: %u (min %u)", esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
+        - logger.log: "AUTOTEST: triggering start_session()"
+        - lambda: 'id(aria).start_session();'
+        - delay: 6s
+        - logger.log: "AUTOTEST: triggering stop_session()"
+        - lambda: 'id(aria).stop_session();'
+        - delay: 2s
+        - lambda: |-
+            ESP_LOGI("autotest", "Heap post-session: %u (min %u)", esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
+        - logger.log: "AUTOTEST: complete"
+
+# === TEMP HEAP MONITOR (v9) — REMOVE before Phase 1 done ===
+interval:
+  - interval: 20s
     then:
-      - logger.log: "KIS Satellite booting — waiting for XMOS + WiFi..."
-      - delay: 5s
-      - logger.log: "Starting wake word detection..."
-      - micro_wake_word.start:
-      - logger.log: "Listening for Hey Jarvis"
+      - lambda: |-
+          ESP_LOGI("heapmon", "Free heap: %u (min %u)", esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
 
 # --- FPH Hardware Packages ---
 # core_board: ESP32-S3 config, PSRAM, I2C, SPI, UART, I2S (duplex + secondary)
@@ -62,6 +85,7 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  power_save_mode: none  # v9: disable WiFi power-save — fixes idle ping choke (426ms->target <50ms)
 
 safe_mode:
 

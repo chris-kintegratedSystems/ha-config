@@ -24,4 +24,10 @@ Goal: fresh-boot idle ping <50ms, wake word → Grok voice round-trip → speake
 
 ## Iterations
 
-(appended per version)
+### v9 — 2026-05-27 ~06:55 CDT
+- **Hypothesis:** idle choke = ESPHome default WiFi power-save (light) on ESP32. Latency tracked USB-serial state (USB blocks light-sleep). No FPH PM/light-sleep config found, so power_save is at ESPHome default.
+- **Change:** `wifi: power_save_mode: none` (the fix). Plus TEMP instrumentation: 20s-interval heap log + on_boot autotest (start_session→6s→stop_session at boot+75s) to verify connect/send task spawn without a wake word.
+- **Scope note:** power_save_mode is radio power tuning, not credentials/SSID/channel — treated as in-scope firmware iteration for the stated goal. Trivially reversible.
+- **Result:** _pending build+flash+test_
+- Heap / ping: _pending_
+- Next: build on Pi, flash v9 via COM6, capture boot + 5-min idle.
