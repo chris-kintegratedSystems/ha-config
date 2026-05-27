@@ -22,7 +22,52 @@ Goal: fresh-boot idle ping <50ms, wake word → Grok voice round-trip → speake
 
 ---
 
+## STATUS @ v13 (2026-05-27 ~09:25 CDT) — round-trip WORKING; 1 robustness caveat
+
+| # | Criterion | Status |
+|---|-----------|--------|
+| 1 | Idle ping <50ms/60s | ✅ 12ms avg (was 426ms) |
+| 2 | Connect fast | ✅ TCP+WS ~1s |
+| 3 | Zero mic drops/session | ✅ 0 (was 267→1.12MB; turn-taking fixed it) |
+| 4 | No ws_send >50ms | ⚠️ near — v13 only 2 blips (96/114ms), was 30+; occasional wifi-spike |
+| 5 | No API drops at idle | ✅ |
+| 6 | Round-trip incl response.audio.delta + relay back | ✅ |
+| 7 | Speaker plays TTS (proof-by-log) | ✅ "Starting Speaker" + ring buffers |
+| 8 | Heap stable across sessions | ✅ stable across ~6 sessions (not formally 20×) |
+
+**CAVEAT — close-time WS framing glitch:** at session end the satellite occasionally misreads a binary audio frame as a text frame (garbled "Bridge status: ▒▒") → `WebSocket read error` close. The conversation completes (TTS plays, 0 drops) *before* this; it's a robustness nuance in the hand-rolled lwIP WS parser (`ws_recv_frame_`) under bidirectional load, surfacing at termination. Proper fix = harden the frame parser (recv-path rewrite) — deferred for a real ear-test first (may not matter mid-conversation).
+
+**Deployed:** satellite v13 (`phase-aria/v13-send-smoothing`), bridge `fix/satellite-audio-chunking` (chunking + v12 turn-taking gating). Both pushed.
+
+## FOR CHRIS'S RETURN
+
+**Bottom line:** the full voice round-trip works end-to-end in logs — wake/connect → mic→Grok (clean, 0 drops) → Grok returns audio → satellite speaker plays TTS → turn-taking (pause mic while ARIA talks) → resume. Idle ping fixed (426→12ms). The big original blocker (the "choke") was zombie `esphome logs` sockets, now fixed. What remains is **real-world validation (your ear-test)** + one cosmetic close-time framing artifact.
+
+**Firmware journey (all branches pushed):**
+- v9 `power_save_mode=none` → ping floor fixed.
+- v10 `fast_connect + post_connect_roaming=false` → idle ping 74→12ms (mesh-roaming churn was the residual stall).
+- v11 instrumentation → mic clean during speech; found TTS recv-buffer crash.
+- bridge `fix/satellite-audio-chunking` → chunk Grok audio to 1024B (satellite 2048B recv buffer).
+- v12 half-duplex turn-taking (bridge gates mic + sends `processing`/`done`; satellite pauses on `processing`) → round-trip + TTS playback + 0 drops.
+- v13 cap satellite send to 2048B → ws_send smooth (30+ slow → 2).
+
+**Ear-test (the real validation):** the satellite currently runs an on-boot AUTOTEST that fires a real session at boot+30s. To avoid collision, test within 30s of a fresh boot, OR ask me to build a clean v14 (strip autotest). Then:
+1. "Hey Jarvis" → speak a prompt → listen for TTS out the speaker.
+2. Bridge log: `ssh -i C:\Users\Chris\.ssh\kis_cc cooper5389@192.168.51.179 "journalctl -u kis-voice-bridge --since '2 min ago' --no-pager | tail -40"`
+3. Watch for: response.audio.delta, and whether TTS is audible + clean. (On USB-5V the speaker is low-power/quieter; wall-PD = full volume.)
+
+**Known remaining items:**
+1. Close-time WS framing glitch (cosmetic, at session end — likely a close-race; confirm it doesn't bite mid-conversation in the ear-test). Proper fix = harden `ws_recv_frame_`.
+2. Criterion 8 heap: stable across ~6 sessions; a formal 20×-session stress not run.
+3. The bridge Phase M manual-commit is still LOAD-BEARING (server_vad doesn't fire) — the real turn-taking trigger should eventually be server_vad (Phase 2), not the 30-chunk manual commit.
+4. Temp code to strip for final clean firmware: on-boot autotest (yaml). The instrumentation (session stats, ws_send timing) is good operational logging — recommend keeping.
+5. ⚠️ Methodology: never `timeout … docker exec … esphome logs` (orphans → socket-pool exhaustion = the original choke). Use serial `.sat-diag/cap.py`.
+
 ## Iterations
+
+### v13 — 2026-05-27 ~09:25 CDT
+- **Change:** satellite send_task caps each ws_send to 2048 B (loop to drain) — smooths sends, breaks the backpressure spiral.
+- **Result:** ws_send >50ms 30+→**2** (max 114ms). 0 drops. Speaker plays. Heap stable. Clean turn-taking. Residual: close-time framing glitch (see caveat).
 
 ### v12 — 2026-05-27 ~09:10 CDT (turn-taking)
 - **Findings from v11 + bridge chunking:** mic-capture-during-speech is clean (0 drops); round-trip to Grok works; **but the session closes ~6s in and TTS never plays.** Root cause: continuous full-duplex streaming (autotest streams mic the whole time, even while ARIA should be responding) → contention + the bridge keeps forwarding post-commit mic to Grok → Grok ends the turn / session dies; big send stalls (7.5s) + drops.
@@ -30,7 +75,15 @@ Goal: fresh-boot idle ping <50ms, wake word → Grok voice round-trip → speake
   - Bridge (deployed): after the manual commit, gate mic→Grok until response.done; send `{"type":"processing"}` to the satellite. On response.done, ungate + send `{"type":"done"}`.
   - Satellite (v12 firmware): on `"processing"` → state=RECEIVING (pause mic send, keep receiving+playing TTS); on `"done"` → STREAMING (resume). One-line recv handler.
 - Kept: bridge 1024B chunking (fixed the recv-buffer crash), power_save_mode, wifi-lock.
-- **Result:** _pending build+flash+capture_ — expect: processing→pause→TTS plays (speaker writes)→done→resume, no read error, low drops.
+- **Result:** ✅✅ **FULL ROUND-TRIP WORKS.**
+  - ✅ Turn-taking cycles: satellite gets `processing`→RECEIVING, `done`→STREAMING.
+  - ✅ **Speaker starts + plays TTS** (`Starting/Started Speaker`, resampler + ring buffers created) — criterion 7 proof-by-log.
+  - ✅ **Mic drops = 0** (sent=935936) — half-duplex eliminated the contention.
+  - ✅ Heap stable, no mid-session crash (end read-error is the normal ~9.6s close).
+  - ✅ Grok round-trip: response.created→done→audio.delta, relay back received.
+- **7/8 criteria green.** Gap = criterion 4: many ws_send >50ms (large 50KB+ frames). Cause: backpressure spiral — send_task drains the WHOLE mic buffer in one frame; one slow send (wifi blip) grows the buffer → bigger/slower next send.
+- Minor: one garbled text frame + `aria_bridge took 110ms` (speaker.play blocking loop) at session end — low impact, watch.
+- **Next (v13):** cap satellite per-send size (drain in ≤2KB frames, loop) to keep each send <50ms and break the spiral; bump bridge TTS chunk 1024→2048 to halve send count.
 
 ### v11 — 2026-05-27 ~08:45 CDT
 - **Goal:** measure session criteria (3,4,6,7,8) now that idle ping (1) is fixed.
