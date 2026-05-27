@@ -252,18 +252,42 @@ bool ARIABridge::ws_send_binary_(const uint8_t *data, size_t len) {
   return ok;
 }
 
+// Read exactly n bytes (handles partial TCP reads + EAGAIN with a bounded yield).
+// Returns bytes read (== n on success). Guarantees frame fields are fully consumed
+// so a partial read can never desync the WS frame stream (v16: fixes TTS clipping).
+int ARIABridge::recv_exact_(uint8_t *buf, size_t n, uint32_t timeout_ms) {
+  size_t total = 0;
+  uint32_t start = millis();
+  while (total < n) {
+    int r = lwip_recv(this->sock_fd_, buf + total, n - total, MSG_DONTWAIT);
+    if (r > 0) {
+      total += r;
+    } else if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      if (millis() - start > timeout_ms)
+        break;
+      vTaskDelay(pdMS_TO_TICKS(1));  // yield (don't busy-spin); rest of frame is in-flight
+    } else {
+      break;  // r == 0 (peer closed) or hard error
+    }
+  }
+  return static_cast<int>(total);
+}
+
 int ARIABridge::ws_recv_frame_(uint8_t *buf, size_t max_len) {
   if (this->sock_fd_ < 0) return -1;
 
-  uint8_t header[2];
-  int r = lwip_recv(this->sock_fd_, header, 2, MSG_PEEK | MSG_DONTWAIT);
-  if (r <= 0) {
+  // Non-blocking peek: only enter the (briefly blocking) atomic reads if data is present.
+  uint8_t peek;
+  int pr = lwip_recv(this->sock_fd_, &peek, 1, MSG_PEEK | MSG_DONTWAIT);
+  if (pr <= 0) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
     return -1;
   }
-  if (r < 2) return 0;
 
-  lwip_recv(this->sock_fd_, header, 2, MSG_DONTWAIT);
+  // Read each field atomically — a short read here previously desynced the stream
+  // (binary audio got parsed as text frames -> read error -> TTS cut off).
+  uint8_t header[2];
+  if (this->recv_exact_(header, 2, 100) != 2) return -1;
 
   uint8_t opcode = header[0] & 0x0F;
   bool masked = (header[1] & 0x80) != 0;
@@ -271,78 +295,59 @@ int ARIABridge::ws_recv_frame_(uint8_t *buf, size_t max_len) {
 
   if (payload_len == 126) {
     uint8_t ext[2];
-    if (lwip_recv(this->sock_fd_, ext, 2, MSG_DONTWAIT) != 2)
-      return -1;
-    payload_len = (ext[0] << 8) | ext[1];
+    if (this->recv_exact_(ext, 2, 100) != 2) return -1;
+    payload_len = (static_cast<size_t>(ext[0]) << 8) | ext[1];
   } else if (payload_len == 127) {
-    uint8_t ext[8];
-    lwip_recv(this->sock_fd_, ext, 8, MSG_DONTWAIT);
-    return 0;
+    return -1;  // 64-bit lengths are never sent here; treat as desync
   }
 
   uint8_t mask_key[4] = {0};
   if (masked) {
-    if (lwip_recv(this->sock_fd_, mask_key, 4, MSG_DONTWAIT) != 4)
-      return -1;
+    if (this->recv_exact_(mask_key, 4, 100) != 4) return -1;
   }
 
-  if (payload_len > max_len) {
-    uint8_t discard[256];
-    size_t remaining = payload_len;
-    while (remaining > 0) {
-      size_t chunk = remaining > sizeof(discard) ? sizeof(discard) : remaining;
-      int rd = lwip_recv(this->sock_fd_, discard, chunk, MSG_DONTWAIT);
-      if (rd <= 0) return -1;
-      remaining -= rd;
-    }
+  if (payload_len == 0)
     return 0;
-  }
+  if (payload_len > max_len)
+    return -1;  // our frames are <=1024 B; larger => desync, fail cleanly
 
-  size_t total = 0;
-  while (total < payload_len) {
-    r = lwip_recv(this->sock_fd_, buf + total, payload_len - total, MSG_DONTWAIT);
-    if (r <= 0) {
-      if ((errno == EAGAIN || errno == EWOULDBLOCK) && total > 0)
-        continue;
-      return (total > 0) ? -1 : 0;
-    }
-    total += r;
-  }
+  if (this->recv_exact_(buf, payload_len, 300) != static_cast<int>(payload_len))
+    return -1;
+  size_t total = payload_len;
 
   if (masked) {
     for (size_t i = 0; i < total; i++)
       buf[i] ^= mask_key[i % 4];
   }
 
-  if (opcode == 0x08) {
-    ESP_LOGI(TAG, "Received WS close frame");
-    return -1;
-  }
-
-  if (opcode == 0x09) {
-    uint8_t pong[6] = {0x8A, 0x80, 0x00, 0x00, 0x00, 0x00};
-    lwip_send(this->sock_fd_, pong, sizeof(pong), 0);
-    return 0;
-  }
-
-  if (opcode == 0x01) {
-    std::string msg(reinterpret_cast<char *>(buf), total);
-    ESP_LOGI(TAG, "Bridge status: %s", msg.c_str());
-    if (msg.find("\"done\"") != std::string::npos) {
-      this->state_ = BridgeState::STREAMING;  // ARIA finished — resume mic
-    } else if (msg.find("\"processing\"") != std::string::npos) {
-      this->state_ = BridgeState::RECEIVING;  // v12: pause mic, listen for TTS (half-duplex)
-    } else if (msg.find("\"timeout\"") != std::string::npos) {
+  switch (opcode) {
+    case 0x08:  // close
+      ESP_LOGI(TAG, "Received WS close frame");
       return -1;
+    case 0x09: {  // ping -> pong
+      uint8_t pong[6] = {0x8A, 0x80, 0x00, 0x00, 0x00, 0x00};
+      lwip_send(this->sock_fd_, pong, sizeof(pong), 0);
+      return 0;
     }
-    return 0;
+    case 0x0A:  // pong
+      return 0;
+    case 0x01: {  // text status from bridge
+      std::string msg(reinterpret_cast<char *>(buf), total);
+      ESP_LOGI(TAG, "Bridge status: %s", msg.c_str());
+      if (msg.find("\"done\"") != std::string::npos) {
+        this->state_ = BridgeState::STREAMING;  // ARIA finished — resume mic
+      } else if (msg.find("\"processing\"") != std::string::npos) {
+        this->state_ = BridgeState::RECEIVING;  // pause mic, listen for TTS (half-duplex)
+      } else if (msg.find("\"timeout\"") != std::string::npos) {
+        return -1;
+      }
+      return 0;
+    }
+    case 0x02:  // binary audio
+      return static_cast<int>(total);
+    default:
+      return 0;  // continuation / unknown — ignore (don't desync)
   }
-
-  if (opcode == 0x02) {
-    return static_cast<int>(total);
-  }
-
-  return 0;
 }
 
 void ARIABridge::connect_task_(void *param) {

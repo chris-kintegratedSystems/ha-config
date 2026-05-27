@@ -49,6 +49,7 @@ class ARIABridge : public Component {
   void ws_disconnect_();
   bool ws_send_binary_(const uint8_t *data, size_t len);
   int ws_recv_frame_(uint8_t *buf, size_t max_len);
+  int recv_exact_(uint8_t *buf, size_t n, uint32_t timeout_ms);  // atomic read (no frame desync)
   bool parse_url_(std::string &host, uint16_t &port, std::string &path);
 
   std::string bridge_url_;
