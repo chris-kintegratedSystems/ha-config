@@ -24,6 +24,13 @@ Goal: fresh-boot idle ping <50ms, wake word → Grok voice round-trip → speake
 
 ## Iterations
 
+### v10 — 2026-05-27 ~08:15 CDT (extended autonomous scope)
+- Power-source ruled out: wall-PD ping (avg 99.7ms) ≈ USB ping (avg 73.8ms), same spikes. Stalls are mesh/AP-side.
+- **Change:** removed v9 temp diagnostics (autotest + heap monitor); kept `power_save_mode: none`; **added `fast_connect: true` + `post_connect_roaming: false`** to lock the device to one Casadekup mesh BSSID and stop roaming churn (steady-state stall hypothesis).
+- Flash: USB COM6 (esptool). Branch `phase-aria/v10-cleanup`.
+- **Result:** _pending build+flash+60s ping_
+- Next: if idle spikes shrink → keep; if not → revert roaming flags, mark ping "best-effort, mesh-side", continue on other criteria.
+
 ### v9 — 2026-05-27 ~06:55 CDT
 - **Hypothesis:** idle choke = ESPHome default WiFi power-save (light) on ESP32. Latency tracked USB-serial state (USB blocks light-sleep). No FPH PM/light-sleep config found, so power_save is at ESPHome default.
 - **Change:** `wifi: power_save_mode: none` (the fix). Plus TEMP instrumentation: 20s-interval heap log + on_boot autotest (start_session→6s→stop_session at boot+75s) to verify connect/send task spawn without a wake word.
