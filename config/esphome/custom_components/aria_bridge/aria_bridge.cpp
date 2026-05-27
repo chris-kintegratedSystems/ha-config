@@ -444,7 +444,10 @@ void ARIABridge::send_task_(void *param) {
         }
         break;
       }
-      self->last_activity_ms_ = millis();
+      // v18 #3 fix: do NOT refresh last_activity_ms_ on mic-SEND. Continuous mic streaming
+      // (incl. feedback) kept sessions alive forever (timeout never fired). last_activity_ms_
+      // is now refreshed only on TTS-RECV (loop()), so a session ends ~SESSION_TIMEOUT_MS after
+      // the last response — letting it end naturally instead of sticking open.
     }
   }
 
