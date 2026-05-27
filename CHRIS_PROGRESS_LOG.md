@@ -63,7 +63,41 @@ Goal: fresh-boot idle ping <50ms, wake word → Grok voice round-trip → speake
 4. Temp code to strip for final clean firmware: on-boot autotest (yaml). The instrumentation (session stats, ws_send timing) is good operational logging — recommend keeping.
 5. ⚠️ Methodology: never `timeout … docker exec … esphome logs` (orphans → socket-pool exhaustion = the original choke). Use serial `.sat-diag/cap.py`.
 
+## ACOUSTIC TEST HARNESS (sat-test/) — 2026-05-27 ~13:10 CDT
+
+End-to-end rig that exercises the REAL satellite (the WS-only harness bypasses it):
+laptop speakers play a wake-word+question prompt → satellite mic → bridge → Grok → bridge
+→ satellite speaker → laptop mic captures it. Compare laptop-mic capture vs bridge-sent reference.
+
+- **Part 1** (kis-voice-bridge/main.py): `relay_grok_to_satellite` saves exact bytes sent to the
+  satellite → `/tmp/sat-tts-capture/<iso>_bridge_sent.wav` (48kHz/16bit/stereo, observer-only). Deployed.
+- **Part 2** `mic_capture.py` — `MicCapture` class (sounddevice, 16kHz mono). Mic = Anker PowerConf C20.
+- **Part 3** `prompt_player.py` — `play_prompt()`. Speaker = BO Speaker (Beolit 20).
+- **Part 4** `sat_acoustic_test.py` — orchestrator: reset sat → mic record → play prompt → poll bridge
+  for session end → stop → scp bridge_sent → STT both (faster-whisper) → metrics → trim prompt portion →
+  compare (STT difflib>0.8, duration within 20%, mic LOOKS_REAL) → PASS/FAIL.
+- **Part 5** `sat_acoustic_batch.py` — runs time/weather/locks sequentially.
+
+**ACOUSTIC SETUP (Chris must maintain):** satellite within ~1-2 ft of laptop mic; laptop speakers within
+~1-2 ft of satellite mic; quiet room (no other voices/TV/music); laptop volume high enough for the
+satellite mic; satellite at default volume (USB-5V = TAS2780 low-power = quieter than wall-PD).
+Future (Phase 2): fixed-position calibrated rig + ambient-noise-floor measurement.
+
+**BLOCKERS before first acoustic test:**
+1. Prompts are QUESTION-ONLY (STT: "What time is it?", "What's the weather like right now?", "Are all the
+   doors locked?") — NO "Hey Jarvis" prefix. The acoustic path needs the wake word. Chris must re-record
+   as full utterances ("Hey Jarvis, what time is it?"). No programmatic splicing (wake-word-detector artifacts).
+2. Satellite must run a NO-AUTOTEST build (current v16 fires the autotest at boot+30s, which blocks the
+   wake-word path). Flash a clean v16 (recv fix unchanged, autotest stripped) before the acoustic test.
+
 ## Iterations
+
+### v15 — 2026-05-27 ~11:25 CDT (CHIPMUNK FIXED)
+- **Root cause of chipmunk (traced):** the I2S bus is **stereo** (XMOS master, 48kHz/32bit/2-slot). The i2s_audio speaker expands 16→32bit but writes samples **sequentially without mono→stereo duplication** — so MONO audio is read as L,R,L,R → 2 samples/frame → **2x too fast**. Rate (16k vs 48k) was a red herring; both v13/v14 delivered mono to a stereo bus.
+- **Fix:** bridge sends 48kHz **STEREO** (new `mono_to_stereo_16bit`, duplicate L=R); satellite `set_audio_stream_info(16, 2, 48000)`. ✅ **Chris confirmed pitch correct.**
+- **Clipping (Chris: "clipped before speech finished"):** traced to the **autotest's 12s `stop_session`** cutting Grok's slow-to-start response (commit ~3s + Grok ~6.7s to first audio = audio starts ~10s, autotest stops at 12s → ~2s played). Removed autotest → clean v15 → real session stays open until Grok done.
+- Note: Grok takes ~6.7s from response.created to first audio delta (latency, possibly because committed audio is ambient noise) — watch in real speech.
+- **Result:** clean v15 built/flashing — pending Chris real ear-test (full response, no 12s cutoff).
 
 ### v14 — 2026-05-27 ~09:33 CDT (chipmunk fix + clean build)
 - **Ear-test feedback:** TTS played as chipmunk/fast → ~3x too fast = 16kHz audio reaching the 48kHz I2S speaker without upsampling.
@@ -172,3 +206,64 @@ Bridge + device are ready for a real wake-word test now (connection + Grok round
 ### Clean-up still pending (do after ping resolved / Phase 1 truly green)
 - Remove v9 TEMP blocks from `satellite1-kis.yaml`: the on-boot autotest (priority -200) and the `interval:` heap monitor. Rebuild = clean v10.
 - The autotest currently fires a real 6s Grok session at every boot+75s — it WILL interfere with your wake-word test if you reboot and wait. Either test within 75s of boot, or I build clean v10 first.
+
+---
+
+## Future Phases (not in current v17 scope)
+
+### Phase 2 — Hardware audit + audio pipeline optimization
+
+Scope: identify and enable Satellite1 hardware/processing capabilities we're not currently using. Paired engineering project between Chris + Claude planning layer with CC executing specific investigations. NOT autonomous work.
+
+Investigation list:
+
+1. XMOS v1.0.3 firmware feature audit
+   - Read FPH Satellite1-XMOS GitHub repo
+   - Document which DSP features are in v1.0.3 binary:
+     * Acoustic echo cancellation (AEC)
+     * 4-mic array beamforming
+     * Noise suppression / reduction
+     * Automatic gain control (AGC)
+     * De-reverberation
+     * Direction-of-arrival estimation
+   - For each feature: is it on by default or needs ESP32 I2C control to enable?
+
+2. FPH package audit
+   - 11 FPH packages exist; KIS imports 2 (core_board, components.external) + adds memory_flasher in v17
+   - One-line annotation per remaining package: what it provides, why we exclude it or what we'd gain by including
+   - Specifically check: satellite1.base.yaml audio config blocks (AEC enable, beamforming target, NR levels), LED ring control patterns, mmWave LD2410/LD2450 integration, temp/humidity/luminosity sensor exposure, hardware mute button wiring, programmable button mappings
+
+3. FPH stock vs KIS comparison
+   - Flash FPH stock firmware, run acoustic harness with same prompts, capture mic+TTS WAVs
+   - Compare bridge-side audio quality KIS vs stock
+   - If stock sounds cleaner, identify the delta
+
+4. Challenging conditions testing
+   - Background noise (HVAC running, music in another room, dishwasher)
+   - Distance variations (1ft, 5ft, 15ft from satellite)
+   - Multi-speaker scenarios (TV + person talking)
+   - Quiet whisper vs normal speech vs loud speech
+
+### Phase 3 — Full-duplex with barge-in
+
+Scope: enable natural conversation interruption. User can say "stop" mid-TTS, satellite cancels Grok response immediately.
+
+Requirements (depends on Phase 2 findings):
+1. XMOS AEC verified working — satellite mic doesn't hear its own speaker output
+2. Remove v12 half-duplex turn-taking gating (RECEIVING state transition)
+3. aria_bridge forwards mic continuously, no awaiting_response gate
+4. Bridge handles Grok response.cancelled events when server_vad fires speech_started during active response
+5. Satellite stops i2s_audio_speaker playback when bridge sends "cancel" message
+6. Network capacity validation for sustained bidirectional audio
+
+### KIS deployment runbook (lesson from v17)
+
+When deploying KIS satellite1 firmware to new clients:
+- Must include memory_flasher block pointed at XMOS firmware
+- v17 added this to satellite1-kis.yaml — future builds inherit
+- Document in customer-facing deployment guide that initial boot may take longer due to XMOS auto-flash (~30-60s)
+- Validation step: confirm "XMOS Firmware Version: vX.Y.Z" in boot log, not "not responding"
+
+### Why these exist as future phases
+
+Phase 1 (v17) gets single-turn voice working in a quiet room — the minimum viable voice assistant. Phase 2 and 3 are the work that makes it actually good (vs barely functional). Both are required before KIS client deployments — clients won't tolerate "works in a quiet room, fails when AC turns on."
