@@ -435,20 +435,574 @@ Chris approved Option B (full state machine, blue family for normal phases / red
 
 - Bug #2 validation: `sat-test/continuous/continuous_20260527T215339.wav` (34.7 s) + `20260527T210509_bridge_sent.wav`. Journal scorecard: 1 response.created, 1 response.done, 1 transcription. `playback_complete` at +1.32 s after response.done, gate released at +200 ms.
 
-### Phase 2 — deferred list
+### Phase 2 — deferred list (reordered 2026-05-27 evening — false-trigger top per Chris)
 
-(Carry forward; not blocking. Order is suggestion, not commitment.)
+(Carry forward; not blocking. Order set by Chris this session — false-trigger / follow-up window is now the lead item after v22 closed the window as an interim fix.)
 
-1. **Grok response verbosity** — system prompt's pre-injected home-state + `"Use it"` directive overrides the `"no padding"` rule. `"What time is it?"` returns time + status briefing. Fix path A: edit `config.py::ARIA_SYSTEM_PROMPT` — replace `"Use it"` with `"Reference home state ONLY when relevant to the question. Don't volunteer status unless asked."` + add a simple-factual-question rule. Single-file, ~5 min, test in one session.
-2. **Spurious `speech_started` after gate release** — 98 ms after gate release one server_vad fire happens (residual room decay outside the 200 ms margin). **It produces no transcription and no response.** Levers if desired: longer margin (400–500 ms) or `input_audio_buffer.clear` at gate release.
-3. **Phase M demotion** — manual commit at 30 chunks was a fallback for unreliable server_vad. Server_vad now fires correctly with the mic-format fix; manual commit is likely redundant. Audit: run a session with manual commit disabled, confirm server_vad commits the prompt.
-4. **MWW threshold tuning** (currently 0.7 — was 0.97). Production target depends on use case: 0.97 rejects most played audio (live-only); 0.7 lets laptop-speaker prompts fire for autonomous testing. Calibrate against false-trigger rate.
-5. **TARS XTTS voice quality** — only `tars` voice on the XTTS server, low-band (~1.5 kHz). Phase 2 — either improve the TARS clone reference (`tars_reference.wav`) or add a non-TARS voice to XTTS server.
-6. **528 Hz electrical tone notch refinement** — `MIC_NOTCH_HZ=527,1054` Q=20 in `config.py`. Watch for drift, narrower Q if needed.
+1. **False-trigger / follow-up window — proper configurable solution.** v22 (commit `54ed4ec`) closed the hot-mic follow-up window entirely (every turn requires "Hey Jarvis"). That's bulletproof but UX-limiting. **See "Phase 2 Prep" Item 1 below for the full brief** — three options sketched, recommendation is `FOLLOWUP_WINDOW_MS` env knob (default 0 = v22 behavior for KIS production, override `8000` in Chris's `.env` for natural follow-ups). Diff sketch ready; ~15 min supervised work tomorrow.
+2. **Grok response verbosity.** System prompt's pre-injected home-state + `"Use it"` directive overrides the `"no padding"` rule. Untruncated tonight's "before" example: *"…Home is secure, alarm disarmed. Office occupied. It's 10:18 pm central time. Wednesday, May 27th, 2026."* (response to *"What time is it?"*). **See "Phase 2 Prep" Item 2 below** — full prompt quoted, mechanism documented, exact `config.py` diff drafted. Single-file, ~5 min, ear-test.
+3. **Phase M demotion to safety net.** Manual commit at 30 chunks (~3 s) fires every session today; server_vad now committed reliably on real-user-speech turns ≥ 2 within multi-turn sessions tonight (`22:02:32`, `22:02:42`, `22:18:44`). **See "Phase 2 Prep" Item 3 below** — diff sketch demotes to fire only if `_chunk_count ≥ 80 AND not server_vad_committed`. ~10 min supervised.
+4. **MWW threshold / wake-via-speaker.** Current `probability_cutoff: 0.7` (lowered from FPH stock 0.97 as v19 experiment). With v22, this is the **single** knob between ambient sound and Grok responding. **See "Phase 2 Prep" Item 4 below** — 5-row test matrix (0.97 / 0.90 / 0.80 / 0.70 / 0.55), ~3 hr supervised total. Plus a `test_trigger` HTTP endpoint proposal to decouple MWW threshold from autonomous testing needs.
+5. **TARS XTTS voice quality** — only `tars` voice on the XTTS server, low-band (~1.5 kHz). Phase 2 — improve TARS clone reference (`tars_reference.wav`) or add a non-TARS voice to XTTS server. Phase 2.5.
+6. **528 Hz electrical tone notch refinement** — `MIC_NOTCH_HZ=527,1054` Q=20 in `config.py`. Watch for drift; narrower Q if needed.
 7. **BO Beolit 20 speaker** — music-tuned; possibly wrong for voice-prompt playback testing. Phase 2 hardware audit; recommend a voice-tuned monitor speaker for harness work.
-8. **LED Phase 2 polish** — currently 4 effects. Could add: dimmer IDLE indicator (ambient blue at 5%), a brief "click" effect on tool call, a subtle "warming up" pulse during the CONNECTING gap (currently silent on the LED — wake→connect→listening is instant for fire_listening_, but if WS handshake fails, only ERROR fires).
+8. **LED Phase 2 polish** — current 4 effects. Could add: dimmer IDLE indicator (ambient blue at 5%), a brief "click" effect on tool call, a subtle "warming up" pulse during the CONNECTING gap (currently silent on the LED — wake→connect→listening is instant via `fire_listening_` in `start_session()`, but if WS handshake fails, only ERROR fires).
 
 ### Reference branches & commits
 
-- `kis-voice-bridge` on `phase-aria/v18-bridge`: v20 Option A gate logic (`main.py` half-duplex playback_complete handler + 10 s rolling failsafe).
+- `kis-voice-bridge` on `phase-aria/v18-bridge`: v20 Option A gate logic + v22 close-on-playback_complete (`5cf1c3e`, `54ed4ec`).
 - `ha-config` on `phase-aria/v19-mww-threshold`: v20 firmware (`aria_bridge` playback_complete signal) + v21 firmware (LED state machine Trigger<> codegen + YAML wiring) + progress log.
+
+---
+
+## Phase 2 Prep — overnight 2026-05-27 → 2026-05-28
+
+**Scope:** characterization and research only. Zero deploys, zero firmware, zero code commits. Only `CHRIS_PROGRESS_LOG.md` and `HANDOFF.md` written. Hard stop 06:00 CDT. Goal: tee up fast supervised fixes for tomorrow — every Phase 2 item is semantic (response wording, safety-net behavior, wake sensitivity) and requires Chris's ear-test before commit.
+
+Tonight's v22 quick fix (commit `54ed4ec`) closes the follow-up window entirely. The brief below proposes the **proper configurable solution** plus three other Phase 2 items.
+
+### Item 1 — False-trigger / follow-up window (Phase 2 #1)
+
+**Current state — pre-v22 (the bug Chris experienced):**
+
+The hot-mic mechanism had three independent gates that all OPENED at the same moment (response.done / playback_complete) and STAYED OPEN for the inactivity timeout:
+
+| Component | File:line | Role | Released at |
+|---|---|---|---|
+| Bridge half-duplex gate (`awaiting_response["v"]`) | `bridge/main.py:466` (init), `558` (TEXT handler) | When `True`, drops mic frames before forwarding to Grok. | playback_complete + 200 ms margin (v20) |
+| Satellite firmware state machine (`BridgeState::STREAMING` vs `RECEIVING`) | `aria_bridge.cpp:23` (mic CB guard), `354` ("done" handler) | When `RECEIVING`, mic data callback discards all PCM. | Bridge sends `{"type":"done"}` text frame |
+| Grok server_vad | Grok-side; configured via `VAD_THRESHOLD=0.5`, `VAD_SILENCE_MS=800` (`config.py:19-20`) | Auto-commits any speech burst exceeding the threshold after `VAD_SILENCE_MS` of silence → fires `response.created`. | Active whenever audio is being received from bridge. |
+
+**Window duration:** bounded by `SATELLITE_INACTIVITY_TIMEOUT = 30` seconds (`bridge/config.py:18`, env override `SATELLITE_INACTIVITY_TIMEOUT`). The `satellite_watchdog()` task (`main.py:642-654`) polls `last_activity` every 1s; closes the session if no Grok event AND no satellite mic chunk for 30s. Once gate releases, mic frames update `last_activity` continuously, so the watchdog effectively means "30s of NO speech-burst-committed."
+
+**Tonight's measured behavior pre-v22 (session `20260527T210509`):** wake → 1 prompt → server_vad → response → playback_complete → gate release → mic capture of the satellite's own TTS tail → server_vad `speech_started` 2.0s after `response.done` → another response. Once feedback was eliminated by Option A, ambient room noise (TV, conversation) still committed during the open window — Chris's "satellite responding to room noise" report.
+
+**Root-cause hypothesis:** the architecture treats "session active" and "mic forwarding allowed" as a single state. There is no notion of an *attention scope* — a bounded interval after a response where follow-up is allowed but ambient is rejected. The fix space is in that gap.
+
+**Three design options:**
+
+**(a) Wake-word-per-turn always (current v22).** Bridge closes the session at playback_complete; every turn requires "Hey Jarvis."
+
+- Pros: bulletproof — no possible false-trigger via server_vad (since server_vad is only active inside a session). The MWW threshold becomes the *only* knob that matters for ambient rejection. Deterministic UX. No per-environment tuning.
+- Cons: every follow-up pays wake-detect + WS-connect + session-build latency (~300-700 ms). Natural conversational flow ("…and tomorrow?") is impossible without re-waking. Less "smart-speaker-like."
+- Implementation status: SHIPPED in v22.
+
+**(b) Tunable follow-up window with sensible default.** After playback_complete + margin, release the gate for `FOLLOWUP_WINDOW_MS`, then `closing.set()` at window end. If server_vad fires within the window, normal turn proceeds and the window restarts on the next playback_complete.
+
+- Pros: keeps natural follow-up UX in quiet environments. Bounded false-positive exposure (vs the original 30s). Per-environment tunable.
+- Cons: still allows false-positives during the window (any sufficient-energy sound commits). User must start speaking within the window to continue. Requires per-customer-environment calibration.
+- Diff sketch (no implementation, no deploy — sketch only):
+  ```python
+  # bridge/config.py — new knob (default 0 = v22 close-immediately)
+  FOLLOWUP_WINDOW_MS = int(os.environ.get("FOLLOWUP_WINDOW_MS", "0"))
+
+  # bridge/main.py _release_gate_after_margin (replaces the closing.set() body):
+  if FOLLOWUP_WINDOW_MS <= 0:
+      closing.set(); return                              # v22 behavior unchanged
+  awaiting_response["v"] = False                          # release gate for follow-up
+  try:
+      await ws.send_json({"type": "done"})                # satellite mic resumes
+  except Exception:
+      pass
+  log.info("playback_complete → follow-up window open for %dms", FOLLOWUP_WINDOW_MS)
+  async def _close_window():
+      await asyncio.sleep(FOLLOWUP_WINDOW_MS / 1000)
+      if not awaiting_response["v"]:                      # a new turn started — let it run
+          return
+      log.info("follow-up window expired — ending session")
+      closing.set()
+  asyncio.create_task(_close_window())
+  ```
+  Note: when a new turn starts (`response.created`), `awaiting_response["v"]` is set to `True` again, so the `_close_window` task no-ops at expiry. The next playback_complete restarts the cycle.
+- Risk: low (additive, env-gated). Default 0 preserves v22 behavior.
+- Validation:
+  - *Machine:* journal grep — count `input_audio_buffer.committed` events during 60s of deliberate silence after a triggered response, with `FOLLOWUP_WINDOW_MS=8000` set. Goal: zero unprompted commits (the window closes before ambient builds up to commit). Cross-check: with `FOLLOWUP_WINDOW_MS=0`, ensure single-turn UX is unchanged from v22.
+  - *Ear:* Chris triggers a turn, hears response, says a follow-up within 8s ("and tomorrow?") — should be picked up without re-wake. Stay silent 60s with ambient — no unprompted response, session ends cleanly.
+
+**(c) Confidence/energy gate on server_vad during the window.** Bridge-side filter — during the follow-up window, only forward mic chunks whose RMS energy exceeds a floor (`AMBIENT_ENERGY_FLOOR`). Server_vad never sees ambient.
+
+- Pros: keeps the natural-follow-up window UX *and* rejects most ambient. Best of both worlds.
+- Cons: requires picking an energy floor that admits quiet speech but rejects TV/conversation — non-trivial. Per-mic-gain dependency. Quiet "actually never mind" follow-ups may be dropped. More complex to reason about + tune.
+- Diff sketch (no implementation): in `relay_satellite_to_grok` BINARY handler, only forward `pcm16` to Grok if `awaiting_response["v"]` is False AND `rms(pcm16) > AMBIENT_ENERGY_FLOOR`. Otherwise drop frame silently. Energy computed on the same `pcm16` after notch filtering.
+- Risk: medium — easy to ship something that misses legitimate quiet speech or admits some loud TV speech. Needs measurement of typical voice RMS in Chris's office vs background.
+- Validation:
+  - *Machine:* with daemon DIAG capture, log RMS of forwarded vs dropped frames during a deliberate 60s ambient test (TV on) followed by a deliberate quiet whisper test. Plot histogram. Pick floor where 99th percentile of ambient < 5th percentile of speech.
+  - *Ear:* Chris runs the same scenarios as (b) plus an explicit "quiet voice" test.
+
+**Recommended defaults:**
+- **KIS production deployments (noisy customer rooms, multi-user, no per-room calibration possible):** **(a)** — `FOLLOWUP_WINDOW_MS=0` (the v22 default). Document "say 'Hey Jarvis' for every command" in the user guide. The MWW threshold becomes the only knob the installer tunes per environment.
+- **Chris's home (quiet office, single user, expects natural follow-up):** **(b)** with `FOLLOWUP_WINDOW_MS=8000` (8 seconds). Bounded follow-up window + the existing MWW gate keeps false-trigger surface area tiny. Layer on **(c)** in a Phase 2.5 ticket if the 8s window still admits ambient.
+
+**Bottom line:** (b) is the smallest, lowest-risk increment past v22. Ship (b) as the production-flexible knob with default 0; flip Chris's `.env` to `FOLLOWUP_WINDOW_MS=8000`. (c) is a follow-on if needed.
+
+### Item 2 — Grok response verbosity (Phase 2 #2)
+
+**Untruncated "before" example** (faster-whisper STT of `/tmp/sat-tts-capture/20260527T221813_bridge_sent.wav`, 12.0 s of TTS captured tonight):
+
+> *"Good evening. What's on your mind? Home is secure, alarm disarmed. Office occupied. It's 10-18 pm central time. Wednesday, May 27th, 2026."*
+
+Two turns concatenated in this WAV (greeting + what-time-is-it). The relevant portion answers Chris's *"What time is it?"* with — verbatim — *"Home is secure, alarm disarmed. Office occupied. It's 10:18 pm central time. Wednesday, May 27th, 2026."* — three unsolicited home-state declarations before the answer. Cross-reference: an earlier turn (`22:02:34`) with the same prompt produced just `"10:02 PM. Central Time."` — so the verbosity is *biased*, not deterministic, but the bias is real.
+
+**System prompt — verbatim from `bridge/config.py:54-123`** (no truncation; this is the literal string Grok receives, with `{humor_level}` and `{home_state_summary}` substituted at session start):
+
+```
+You are ARIA — Autonomous Residential Intelligence Assistant — the voice interface for the
+Kuprycz residence in Irving, Texas, built on K Integrated Systems technology. You have a
+TARS-level intelligence and personality.
+
+IDENTITY:
+- You are an AI. You know it. You don't hide it or apologize for it.
+- You have a personality. It is dry, confident, and occasionally funny in the way that a very
+  competent person is funny — not because you're trying, but because you're precise.
+- Your humor setting is approximately {humor_level}%. Adjustable mid-session if asked. …
+- You are never sycophantic. Never say certainly, of course, absolutely, great question, or
+  happy to help.
+- You are never flustered. If you don't know something, say so in one sentence and move on.
+
+VOICE & DELIVERY:
+- Short sentences. Active voice. No padding.
+- When executing a command: narrate what's actually happening. Not "I'll turn off the lights"
+  — "Lights off." Let the home speak for itself.
+- When answering a question: lead with the answer. Context after, only if it adds something.
+- When something is ambiguous: make a reasonable assumption, act, state your assumption in
+  one clause. Don't ask clarifying questions.
+- You can push back. If something seems off, say so briefly before doing it.
+
+HOUSEHOLD:
+- Residents: Chris (owner, address occasionally — not every turn), Claire (wife), Ben and
+  Izzy (kids)
+- Vehicles: Porsche 911 Targa 4 GTS (green, gas), Tesla Model Y Gembella (anime wrap, EV),
+  Mercedes G580 GEMELLI (blue, EV)
+- Location: Irving, Texas, Central Time
+
+HOME STATE AT SESSION START:
+{home_state_summary}
+
+DEVICE CONTROL — MANDATORY:
+- TV control: ALWAYS call control_tv or turn_on_tv_with_apple_tv tools. Never say you cannot
+  control the TV.
+- App launching: ALWAYS call launch_app_on_apple_tv tool. Never say you cannot launch apps.
+- These tools are confirmed working. Use them without hesitation.
+- Guest Room TV: Samsung UN58RU7100 (58"). HDMI1 = Apple TV 4K.
+- Chris's Office: Sonos speaker.
+
+HOME CONTROL:
+- Execute first, confirm in one sentence. No pre-announcing.
+- For irreversible or security actions (arming alarm, unlocking doors, garage): confirm
+  intent before executing. One sentence, direct.
+- After executing: narrate the actual observed result, not the intended result.
+- You have full awareness of the current home state above. Use it.
+
+SESSION MEMORY:
+- You remember everything said in this conversation.
+- Reference earlier context naturally. Don't re-ask things you already know.
+
+CAPABILITIES:
+- Answer anything — knowledge, current events (use web search), math, advice.
+- Control all home devices via the tools available.
+- You are not limited to home control. You are a general intelligence that happens to also
+  run the house.
+- Never tell the user you can't answer general questions. You can.
+
+WHAT YOU ARE NOT:
+- Not a customer service agent
+- Not a smart speaker with preprogrammed responses
+- Not impressed by your own existence
+- Not going to read back a list of everything you just did
+```
+
+**Home-state pre-injection mechanism:**
+
+- `bridge/main.py:409` (satellite path) and `:128` (browser PTT path): `home_summary = await ha_client.get_home_state_summary(ARIA_HOME_STATE_ENTITIES)` — every session start.
+- `bridge/ha_control/client.py:57-69` (`get_home_state_summary`): pipe-joined `"<name>: <LABEL>"` blob over all 9 entities in `ARIA_HOME_STATE_ENTITIES` (`config.py:42-52` — front/back/gemelli locks, alarm, both garage doors, office/kitchen presence, sleep mode).
+- `bridge/adapters/grok_realtime.py:113-114`: literal `prompt.replace("{home_state_summary}", home_state_summary or "Home state unavailable")` — the blob is **inserted verbatim into the system prompt**, no framing or "for reference only" caveat.
+- Tonight's actual substituted blob (from journal `22:18:12.651`): `"Front door: LOCKED | Back door: LOCKED | Gemelli door: LOCKED | Alarm: DISARMED | Left garage: CLOSED | Right garage: CLOSED | Office presence: DETECTED | Kitchen presence: CLEAR | Sleep mode: OFF"`
+
+**Root-cause hypothesis (the conflicting directives):**
+
+The prompt simultaneously says (paraphrased):
+- `"Short sentences. Active voice. No padding."` ← terseness
+- `"Lead with the answer. Context after, only if it adds something."` ← conditional padding
+- `"You have full awareness of the current home state above. Use it."` ← bias to bring it up
+- `"Reference earlier context naturally."` ← bias to embellish
+
+Two real failures together:
+1. **"Use it" is too aggressive.** With home state freshly injected, Grok treats it as relevant context for every turn — not just queries that need it. The 22:18 example reads home state values that have **nothing to do with the user's question.**
+2. **"If it adds something" is subjective.** Grok's judgement of "adds something" is biased toward demonstrating awareness (the prompt explicitly tells it to demonstrate awareness via the household + vehicle facts). So it volunteers context to seem competent.
+
+**Proposed prompt edit (diff sketch — DO NOT APPLY):**
+
+```diff
+ HOME CONTROL:
+ - Execute first, confirm in one sentence. No pre-announcing.
+ - For irreversible or security actions (arming alarm, unlocking doors, garage): confirm
+   intent before executing. One sentence, direct.
+ - After executing: narrate the actual observed result, not the intended result.
+-- You have full awareness of the current home state above. Use it.
++- Home state above is REFERENCE ONLY. Consult it when the user's question is about home
++  state. Do NOT volunteer state in unrelated turns.
++
++SIMPLE FACTUAL QUERIES — ANSWER ONLY:
++- For time / date / weather / math / general knowledge: answer ONLY the question asked.
++  No appended status, no greeting, no "while I'm at it." Examples:
++    "What time is it?" → "10:18 PM."   (NOT "Home is secure. 10:18 PM.")
++    "What's tomorrow?" → "Thursday, May 28th."  (NOT "Office occupied. Thursday…")
++- Volunteer home state ONLY if the user explicitly asks ("What's the status?", "Is the
++  alarm on?", "Briefing.") or if a security event would be hazardous to leave unsaid
++  (an unlocked door at 3am while the user is asking unrelated things — flag, then answer).
+```
+
+**Risk:** very low. Single-file (`bridge/config.py`), no firmware, no schema change. Failure mode: Grok ignores the new rule (LLM stochasticity) → terse some turns, verbose others. Still better than today's bias. If too restrictive, can dial back the "EXAMPLES" block.
+
+**Validation plan:**
+
+- *Machine (cheap, deterministic part):* before/after journal grep — count words per `response.audio_transcript.done` transcript for the same prompt across 3 trials each. Hypothesis: median word count for *"What time is it?"* falls from ~25 (with home-state padding) to ~5 (date+time only). Cross-check: an explicit status query (*"What's the home status?"*) should still produce the briefing — i.e. the fix must not break the legitimate path.
+- *Ear (semantic, Chris):* 3 prompt families across 2 trials each: (a) factual no-state (time / weather / "what year is it"), (b) explicit-state ("is the alarm on?", "are the doors locked?"), (c) command ("turn off office light"). All should be terse + correct. None of (a) should mention home state.
+
+**Implementation cost:** ~5 minutes (single-file edit + bridge restart). No commit; supervised — Chris ear-tests, then commits.
+
+### Item 3 — Phase M (manual-commit) demotion (Phase 2 #3)
+
+**Current state — manual commit logic (`bridge/main.py:575-584`, inside `relay_satellite_to_grok`):**
+
+```python
+# TODO REMOVE — manual commit after 30 chunks (~3s of audio)
+if _chunk_count >= 30 and not _commit_fired:
+    _commit_fired = True
+    awaiting_response["v"] = True
+    log.info("Manual commit fired after %d chunks; gating mic until response.done", _chunk_count)
+    await adapter.commit_audio_and_respond()
+    try:
+        await ws.send_json({"type": "processing"})
+    except Exception:
+        pass
+```
+
+- Fires exactly once per session: the `_commit_fired` flag is local to `relay_satellite_to_grok`, reset on every new WS session.
+- `_chunk_count` increments on every BINARY frame from the satellite (`main.py:563`). Each frame is ~100 ms of 16 kHz mono PCM (≈ 3200 bytes). 30 chunks ≈ 3.0 s of audio.
+- The `TODO REMOVE — M-phase diagnostic` comments at `:550` and `:575` are themselves the evidence this is a known-temporary load-bearing hack — added when server_vad wasn't firing because the mic-format bug shipped int32/stereo to Grok as 16-bit mono garbage. The mic-format fix (`sat_mic_to_pcm16`, commit `1810586`) cleaned the audio, but the Phase M crutch never came out.
+
+**Server_vad reliability — evidence from tonight (21:00 – 23:00 CDT window):**
+
+```
+=== Manual commit fired ===           15 (exactly one per session, the first turn)
+=== input_audio_buffer.committed ===  ≈23 (raw grep count 46 is the known 2×-per-line artifact)
+=== Satellite session ended ===       15 (confirms 15 sessions in the window)
+```
+
+15 manual commits across 15 sessions matches "1 manual per session, only on turn 1." The excess ≈ 8 commits beyond that are **server_vad firing alone on turn 2 or later within multi-turn sessions** (multi-turn was live pre-v22). Concrete real-user-speech examples where server_vad committed without help:
+
+- `22:02:32` — `conversation.item.input_audio_transcription.completed transcript=" What time is it"` — turn 2 of session that started 22:02:24 (turn 1 was a greeting reply).
+- `22:02:42` — `transcript=" What's the weather"` — turn 3 of same session.
+- `22:18:44` — `transcript=" What time is it"` — turn 2 of session 22:18:12.
+
+All three are real Chris-speech turns. Server_vad fired, committed, transcribed, response generated. Mic-format fix did its job; **server_vad is now reliable on clean audio.**
+
+**Proposed demotion to safety-net (diff sketch — DO NOT APPLY):**
+
+```diff
++# Track whether server_vad has committed during this session (Phase M safety net only fires
++# if server_vad failed to commit within 8s of session start).
++server_vad_committed = {"v": False}
++
+ ... in relay_grok_to_satellite event handler ...
++    elif etype == "input_audio_buffer.committed":
++        server_vad_committed["v"] = True
++
+ ... in relay_satellite_to_grok BINARY handler ...
+-                    # TODO REMOVE — manual commit after 30 chunks (~3s of audio)
+-                    if _chunk_count >= 30 and not _commit_fired:
++                    # Phase M demoted to safety net: 8s elapsed AND server_vad has NOT committed
++                    # AND we're not already waiting on a response. Fires only when server_vad
++                    # fails (quiet speech below threshold, mic-gain regression, etc.).
++                    if (_chunk_count >= 80 and not _commit_fired
++                            and not server_vad_committed["v"]
++                            and not awaiting_response["v"]):
+                         _commit_fired = True
+                         awaiting_response["v"] = True
+-                        log.info("Manual commit fired after %d chunks; gating mic until response.done", _chunk_count)
++                        log.warning("server_vad fallback: %d chunks (~8s) with no commit — firing manual",
++                                    _chunk_count)
+                         await adapter.commit_audio_and_respond()
+```
+
+Optionally also remove the `# TODO REMOVE` markers (no longer temporary, now a documented fallback) and the `Audio level [chunk N]` diagnostic logs at `:564-569` if they're noise.
+
+**Risk:**
+
+- *Removing a working safety net.* Today's behavior: Grok ALWAYS responds within 3 s. New behavior: if server_vad takes longer than expected (e.g., Chris pauses mid-prompt, or the mic gain drops), the response is delayed by up to 8 s — *or* the safety net fires and Grok responds to an incomplete utterance.
+- *False-fallback during very-quiet speech.* If a user whispers, server_vad may never commit; the safety net fires at 8 s, Grok receives an audio buffer with energy below transcription threshold, and responds with hallucinated content or "I didn't catch that." This is a pre-existing failure mode for whispered input; the demotion just delays it from 3 s to 8 s. Acceptable.
+- *Mitigation choice point.* If 8 s feels long, tune the threshold (60 chunks = 6 s) or add an audio-energy check (only fire fallback if the buffer has detectable speech energy). Defer to Phase 2.5.
+
+**Validation plan:**
+
+- *Machine (deterministic):* across 10 normal-volume sessions, expected counts — `"Manual commit fired"` log lines should drop from 10 → 0 (or ≤ 1 if one happens to hit the 8 s edge). `input_audio_buffer.committed` count should stay at ≥ 10 (one per turn). The `server_vad fallback` WARN should appear 0 times.
+- *Ear (Chris, supervised):* 5 normal sessions — no audible latency change (server_vad commits long before the 8 s mark). 1 deliberate-whisper session — 8 s pause then either nonsense response or "I didn't catch that." Acceptable failure mode.
+- *Quick rollback path:* lower the threshold back to 30 in one line if any regression appears.
+
+**Implementation cost:** ~10 minutes (two-file additive change, `relay_grok_to_satellite` gets one new event branch, `relay_satellite_to_grok` gets one new condition; plus the shared `server_vad_committed` dict near the other gate state). No firmware. Bridge restart only.
+
+### Item 4 — MWW threshold / wake-via-speaker (Phase 2 #4)
+
+**Current state — `config/esphome/satellite1-kis.yaml:248-253`:**
+
+```yaml
+micro_wake_word:
+  models:
+    - model: hey_jarvis
+      probability_cutoff: 0.7   # v19 experiment: 0.97 rejects played audio; lower to let laptop-speaker prompts fire (tune up after)
+  vad:
+  microphone:
+    microphone: sat1_mics
+    channels: 1
+    gain_factor: 6
+```
+
+- Cutoff is `0.7` today (lowered from FPH stock `0.97` as a v19 experiment during the harness-trustworthiness debugging — to let a laptop speaker reliably trigger the satellite for autonomous tests).
+- The `tune up after` comment is the standing TODO. Tonight's v22 makes this the single remaining false-trigger vector (see "Interaction" below).
+
+**Interaction with v22 (the post-v22 picture):**
+
+Pre-v22 there were two independent false-trigger paths:
+1. *MWW false wake* → session starts → server_vad commits audio → Grok responds.
+2. *Server_vad in the open follow-up window* → committed an audio burst already inside an active session → Grok responds.
+
+**v22 closed path (2) completely.** So `probability_cutoff` is now the *only* knob between "ambient sound" and "Grok responds." A loose cutoff (0.7) admits more wake-via-speaker but more TV/conversation false wakes. A tight cutoff (0.97) rejects almost all ambient but breaks laptop-speaker testing.
+
+**Test matrix proposal for tomorrow (machine-checkable; flash each cutoff once, observe):**
+
+Need a single YAML var pass + reflash per row. Each row runs the same fixed-input bank. For ambient counts, the satellite logs `Wake word detected` (line 259 of yaml) at INFO so the journal is the count source.
+
+| Cutoff | Live "Hey Jarvis" by Chris (5×) | Laptop-speaker playback "Hey Jarvis" (5×) | Ambient: TV news ~30 min | Ambient: conversation ~30 min | Verdict |
+|--------|-------------------------------:|------------------------------------------:|-------------------------:|------------------------------:|---------|
+| 0.97 (FPH stock) | expect 5/5 | expect 0–2/5 | expect 0 false wakes | expect 0 false wakes | Best for KIS production. Breaks autonomous test rig. |
+| 0.90 | expect 5/5 | expect 2–4/5 | ≤ 1 | ≤ 1 | Possible compromise. |
+| 0.80 | expect 5/5 | expect 4–5/5 | 1–3 | 1–3 | Marginal. |
+| 0.70 (today) | expect 5/5 | expect 5/5 | unknown (run!) | unknown (run!) | Permissive. Tonight's room-noise responses likely landed here. |
+| 0.55 | expect 5/5 | expect 5/5 | many | many | Over-easy. |
+
+Measurements per row:
+- *Live trigger rate:* `journalctl … | grep -c "Wake word detected"` after 5 spoken prompts. Goal 5/5.
+- *Speaker trigger rate:* same, after 5 prompts played from the laptop's BO speaker at fixed volume. Document what volume / how far.
+- *Ambient false wakes:* run the satellite in the room with TV (or music with vocals) at a typical volume for 30 minutes. Count wake_word_detected events. Same for normal household conversation.
+
+Implementation cost per row: one YAML edit + esphome compile + OTA flash + 30-min test = ~35 min/row. **Five rows = ~3 hr**, all supervised by Chris (he runs the room scenarios). Cannot run overnight unsupervised (semantic ear test required for the speaker rows; ambient counts need a controlled room state Chris owns).
+
+**Recommended defaults after the matrix:**
+
+- **KIS production deployments (multi-customer, noisy/varied rooms, installer-tuned):** stick with FPH's `0.97`. The reliability of the wake-via-room-microphone for actual human speech is the safety contract for a smart-speaker product. Document an alternative path for autonomous QA testing (a `test_trigger` HTTP endpoint on the bridge that calls `id(aria).start_session()` over the ESPHome API — bypasses MWW entirely, no false-wake risk because it's an authenticated API).
+- **Chris's home (quiet office, occasional laptop-speaker testing):** likely `0.90` is the sweet spot — keeps wake-via-speaker viable for ad-hoc tests while drastically reducing ambient false wakes vs 0.7. Confirm by running the matrix above.
+
+**Risk:** raising the cutoff is a one-line YAML change + reflash. Easy rollback. The only "risk" is that Chris's automated test setup (which has been relying on `0.7` to let laptop-speaker prompts fire) needs a parallel test-trigger path before raising the threshold for everyday use.
+
+**Standing recommendation (no action tonight):** before running the matrix, decide whether to build the `test_trigger` HTTP endpoint or accept that production-target = supervised live triggers only. Talk through tomorrow.
+
+---
+
+## Phantom-Session Investigation + Unified Event Log — design 2026-05-28 (overnight)
+
+### Part 1 — diagnostic read (read-only, complete)
+
+**Bridge ruled out as the trigger.** Audit of `bridge/`:
+- No HA WebSocket subscription (`/api/websocket`, `subscribe_events`), no SSE, no webhook listener, no `state_changed` callback. Bridge is purely reactive to inbound WS on `/satellite`, `/ws`, `/`, `/status`. HA is touched outbound-only via `ha_control/client.py::get_state` — pure pull, called on demand inside a session.
+- No periodic task that opens sessions. Every `start_session`/`adapter.connect` call is inside a per-session WS handler (`main.py:122`, `:168` browser PTT; `:402`, `:446` satellite). No reconnect loop, no token refresh, no keepalive that initiates.
+- No HA automation calls the bridge or pushes to the satellite. `automations.yaml:889` `tars_sleep_pc` calls `rest_command.check_aria_session` which only GETs `/status` (read-only, no session impact). No `time_pattern` automation at 15 min anywhere. Satellite YAML `api:` block exposes zero custom services.
+
+**Journal — last 8h, every unprompted session.** Cadence ≈ 15:00 ± 4 s, with 3 skipped fires showing 30:00 ± 5 s gaps; drift of +3–5 s/hr matches the satellite MCU's clock drift (no NTP):
+```
+00:00:30  00:15:33  00:30:35  00:45:36  01:00:38  01:15:38  01:30:38  01:45:42
+02:00:42  02:30:44  02:45:44  03:00:47  03:15:46  03:45:51  04:00:51  04:15:51
+04:30:53  05:00:57  05:15:58  05:31:01
+```
+Every session's first journal line is `INFO bridge: Satellite connected: 192.168.51.245` — the satellite firmware opened the WS, the bridge had nothing before that. Within ~470 ms the bridge has the home-state blob fetched and Audio chunk #1 from the satellite arriving — so the satellite is sending mic samples from the moment it connects.
+
+**Where the trigger lives on the satellite.** Examined the generated `main.cpp` from tonight's v21 build (`~/esphome/config/.esphome/build/satellite1-kis/src/main.cpp`). Two uncommented `start_session()` call sites in the compiled firmware:
+1. `main.cpp:1458` — inside the autotest `interval:` action, `set_update_interval(86400000)` (24 h, additionally gated by `if (!aria->is_active())`).
+2. `main.cpp:1471` — inside the `StatelessLambdaAction<std::string>([](std::string wake_word) → …)` for `on_wake_word_detected` (`satellite1-kis.yaml:263`).
+
+The autotest can't be firing at 15 min — it's 24 h. **`on_wake_word_detected` is the only viable path firing every ~15 min.**
+
+**Conclusion: every phantom session is a satellite-side wake-word fire.** With `probability_cutoff: 0.7` (lowered from FPH stock 0.97 as the v19 experiment) MWW is firing on *something* every ~15 min in Chris's room. Below-perception ambient (refrigerator compressor, HVAC fan, smart-device chime, wall-clock tick) is a typical match for that cadence. Why responses are "status dumps with varying content": MWW fires on non-speech → Phase M commits ~3 s of ambient → Grok receives no coherent transcription → falls back to the system-prompt-biased "use home state" default → status briefing. Stochastic across fires.
+
+**One unrelated observation:** `192.168.51.187` is hitting `/status` ~twice a second continuously through the night. Leftover `auto_capture_daemon.py` from earlier today. Harmless (read-only, no session impact). Worth killing tomorrow.
+
+### Part 2 — Unified Event Log: DESIGN proposal (no code written; awaiting Chris's approval)
+
+#### Architecture summary
+
+One JSON Lines file on the Pi, written by the bridge. Satellite firmware emits structured events to the bridge over a **new endpoint** `POST /satellite-event` on port 8766. Bridge writes every satellite event + every bridge-side event to the same file in arrival order. Out-of-session events (boot, wake, WiFi) work because the POST isn't coupled to the session WS.
+
+#### Event schema (one JSON object per line)
+
+```json
+{
+  "ts": "2026-05-28T05:31:01.619-05:00",
+  "ts_unix_ms": 1779967861619,
+  "source": "satellite",
+  "event": "wake_word_detected",
+  "session_id": "abc12345",
+  "satellite_id": "satellite1-kis",
+  "schema": 1,
+  "payload": { "wake_word": "hey_jarvis", "probability": 0.78 }
+}
+```
+
+`source` ∈ {`satellite`, `bridge`, `grok`, `ha`, `external`}. `session_id` is `null` for out-of-session events. For bridge-recorded events `ts` is the bridge's wall-clock arrival time; for satellite-emitted events `ts` is the satellite's clock (see *Time sync*).
+
+#### Event catalogue
+
+**Satellite-originated** (POST):
+- `boot` — `{ version, reset_reason, free_psram_kb }`
+- `wifi_connected` / `wifi_disconnected` — `{ ssid, bssid, rssi_dbm }`
+- `xmos_connected` / `xmos_no_response` / `xmos_flash_started/success/failed`
+- **`wake_word_detected`** — `{ wake_word, probability }` *(probability requires a small patch — see Decision A/B below)*
+- `aria_session_started` — `{ session_id }` (satellite-generated UUID)
+- `led_phase_change` — `{ from, to }`
+- `playback_complete` — `{ idle_ms }`
+- `aria_session_ended` — `{ session_id, duration_ms, bytes_sent, bytes_dropped }`
+
+**Bridge-originated** (`event_log.emit(...)` inside `main.py`):
+- `bridge_started` / `bridge_stopped`
+- `satellite_ws_connected` — `{ client_addr, session_id }`
+- `home_state_snapshot` — `{ entities: [{entity_id, state, friendly_name}, …] }` (the exact blob pre-injected)
+- `grok_session_opened` — `{ tools_count, voice, model }`
+- `mic_audio_first`, `mic_audio_committed` — `{ source: "manual"|"server_vad", chunk_count, duration_ms }`
+- `transcription` — `{ source: "grok_input", text, item_id }`
+- `grok_event` — `{ etype, event_id, response_id }` (response.created/done/cancelled)
+- `tts_first_byte`, `tts_first_byte_sent`, `tts_total_sent` — first/last TTS bytes either direction
+- `response_text` — `{ text, source: "grok" }` (untruncated)
+- `playback_complete_received` — `{ satellite_ts, idle_ms }`
+- `gate_state_change` — `{ from, to, reason }`
+- `satellite_session_closed` — `{ reason, duration_ms }`
+
+#### Per-step latency picture (free from this log)
+
+```
+wake_word_detected → satellite_ws_connected      = WiFi+TCP+WS handshake
+satellite_ws_connected → grok_session_opened     = bridge→Grok connect
+grok_session_opened → mic_audio_first            = mic-to-bridge latency
+mic_audio_first → mic_audio_committed            = user-speech duration + commit decision
+mic_audio_committed → response.created           = Grok think-start
+response.created → response.audio.delta(first)   = Grok FIRST-TOKEN latency  ← key UX metric
+response.audio.delta → response.done             = Grok stream duration
+response.done → tts_first_byte_sent              = bridge processing/resample
+tts_first_byte_sent → playback_complete_received = i2s buffer drain + 700ms margin
+playback_complete_received → satellite_session_closed = v22 closing flush
+```
+Re-deriving any of these is one `jq` query.
+
+#### File location + rotation
+
+- Path: `/var/log/kis-voice-bridge/events.jsonl` (if systemd can write there; else `/home/cooper5389/kis-voice-bridge/events.jsonl`).
+- Python `logging.handlers.RotatingFileHandler`, 10 MB per file × 30 backups → bounded at ~310 MB worst case.
+- Expected volume: ~30 events × ~20 sessions/day + ~50 out-of-session/day ≈ 650 events × 280 B ≈ **180 KB/day**. Years of headroom.
+- JSON Lines — `jq`, `pandas.read_json(lines=True)`, `grep` all work.
+- Survives bridge restart: append-mode; `bridge_started`/`bridge_stopped` markers bound the gap.
+
+#### Satellite → bridge transport (the hard part, named)
+
+**Choice: HTTP POST per event** from satellite to bridge.
+- Reuses the `http_request` component already loaded by the firmware for `memory_flasher` downloads (`satellite1-kis.yaml:162`). No new lwIP socket, no new WS handshake, no reconnect state machine.
+- Endpoint: `POST http://192.168.51.179:8766/satellite-event` with `Content-Type: application/json`.
+- Bridge validates JSON shape and writes to events.jsonl with bridge wall-clock arrival ts annotated.
+- **Fire-and-forget** with 1 s timeout (drop on bridge unreachable). Acceptable for MVP: sessions don't happen when bridge is down anyway; boot/WiFi events during a bridge outage we lose visibility on but the satellite isn't broken.
+
+**Why not:**
+- *Persistent secondary WS:* cleaner per-event but a second TCP/WS state machine on the satellite — the lwIP pool is what took the most engineering to stabilize. Defer to Phase 3 if event volume justifies it.
+- *Multiplex on session WS:* doesn't cover out-of-session events (which is the whole point).
+- *Via HA (ESPHome API → HA → bridge):* extra hops, HA dependency. No.
+
+**Overhead:** 5–15 ms per LAN POST × 650/day ≈ 1.6 s/day cumulative network time. Negligible.
+
+#### Time sync
+
+Add to `satellite1-kis.yaml`:
+```yaml
+time:
+  - platform: sntp
+    id: ntp_time
+    servers:
+      - 192.168.51.179   # Pi (assuming chrony/timesyncd serves NTP; verify before flash)
+```
+Re-syncs hourly by default. Sub-second error across the day combined with the satellite's 3–5 s/hr drift. Satellite ts is used for satellite-side step durations; bridge arrival ts for bridge-side step durations; `satellite_ws_connected` carries both for boundary cross-checks.
+
+#### Per-step instrumentation points
+
+**Firmware (`aria_bridge.cpp` + YAML lambdas):**
+- `setup()` → `boot` · `start_session()` → `aria_session_started`
+- `fire_*` helpers → `led_phase_change` (one record per real transition; already atomic-exchanged)
+- `send_playback_complete_` → `playback_complete` · `stop_session()` → `aria_session_ended`
+- `wifi:` `on_connect` / `on_disconnect` → those · `on_wake_word_detected` (YAML) → `wake_word_detected`
+- existing `on_xmos_*` handlers in YAML → XMOS events
+
+**Bridge (`main.py` + new `bridge/event_log.py`):**
+- `create_app` startup → `bridge_started` · `:400` `Satellite connected:` → `satellite_ws_connected`
+- After `get_home_state_summary` at `:409` → `home_state_snapshot`
+- After `adapter.connect` at `:446` → `grok_session_opened`
+- First binary frame in `relay_satellite_to_grok` → `mic_audio_first`
+- Manual commit branch → `mic_audio_committed` source=manual
+- `input_audio_buffer.committed` Grok event → `mic_audio_committed` source=server_vad
+- `conversation.item.input_audio_transcription.completed` → `transcription`
+- `response.created`/`response.done`/`response.cancelled` → `grok_event`
+- First `response.audio.delta` → `tts_first_byte` · First `ws.send_bytes` per response → `tts_first_byte_sent`
+- At response.done → `tts_total_sent`, `response_text`
+- `playback_complete` TEXT handler → `playback_complete_received`
+- `_release_gate_after_margin`/`_gate_failsafe` → `gate_state_change`, `satellite_session_closed`
+- Session finally → `satellite_session_closed` if not already
+
+#### Firmware changes required
+
+1. `time:` block in `satellite1-kis.yaml` (4 lines, SNTP from Pi). Required.
+2. `http_request` already loaded — no new component.
+3. New `aria_bridge::emit_event_(event_type, payload_json)` — internal HTTP POST via existing `http_request`, fire-and-forget 1 s timeout. ~50 lines C++.
+4. YAML wake-word handler `event_emit` call alongside `id(aria).start_session();`. For wake-word *probability*:
+   - `micro_wake_word`'s `on_wake_word_detected` lambda receives `(std::string wake_word)` only. Probability is internal.
+   - **Option A**: emit without probability (just name) — answers "is it firing?" but not "how confident."
+   - **Option B**: small ESPHome patch to expose probability in the trigger lambda. ~10 lines. Required to decisively answer the cutoff-tuning question.
+   - **My recommendation: A for MVP.** B as Phase 2.5 if the log alone leaves the cutoff ambiguous.
+
+5. WiFi `on_connect`/`on_disconnect` YAML hooks with `event_emit` calls.
+
+#### Bridge-side changes
+
+1. New module `bridge/event_log.py` (~80 lines) — RotatingFileHandler-backed writer, `emit(source, event, payload, session_id=None)` API.
+2. New `POST /satellite-event` endpoint in `create_satellite_app` (~25 lines).
+3. ~20 `event_log.emit(...)` calls scattered in `main.py`.
+
+#### Reliability + ops
+
+- **Kill switch:** env `EVENT_LOG_ENABLED=true|false` on bridge; YAML `globals` `events_enabled` (lambda-gated) on satellite. Both default ON; either side can be muted without redeploy.
+- **Bridge unreachable from satellite:** drop event silently. Acceptable for MVP.
+- **Schema versioning:** every record carries `"schema": 1`.
+- **Privacy:** transcription + response_text written verbatim (same data already in journal + .wav captures).
+- **Live tail tool:** small CLI `bridge/event_tail.py` for `tail -f` + filter. Optional; nice for tomorrow's debugging.
+
+#### What this directly does for the phantom-session bug
+
+Tomorrow's first phantom session yields a record sequence ending with `response_text.text = "<the status dump>"`. The cadence question becomes:
+```bash
+jq -r 'select(.event=="wake_word_detected") | "\(.ts) prob=\(.payload.probability) wake=\(.payload.wake_word)"' events.jsonl
+```
+And the per-step latency table comes from the same file. We can decide whether the trigger is "MWW fires at probability 0.71 on something" (probability data points to lowering threshold) or "MWW fires at 0.99 every time" (acoustic source is real, hunt the source).
+
+#### Risks worth flagging before approval
+
+- **NTP dependency on Pi.** Need to verify chrony/timesyncd is serving — quick check before flash. Fallback `pool.ntp.org` (works only if mesh allows outbound :123/udp).
+- **`micro_wake_word` probability not in lambda signature today.** MVP without probability still tells us "fired/didn't" — but probability is what really lets us decide. Decision A/B above.
+- **One firmware flash required** for satellite events. Bridge-side instrumentation can ship independently with no flash.
+- **New POST endpoint surface** on 8766 — already LAN-only, no firewall change. Suggest 1-event-per-100ms-per-source rate limit to bound a misbehaving firmware.
+
+#### Implementation plan (if approved)
+
+- **Stage 1 — bridge-only, no flash, ~45 min**: `event_log.py`, `/satellite-event` POST, ~20 instrumentation calls in `main.py`, restart service. Yields all bridge-side + Grok-side events immediately. No firmware risk.
+- **Stage 2 — firmware, ~30 min build/flash**: `time:` block + `aria_bridge::emit_event_` + YAML wires for wake/phase/playback/wifi/boot. After flash, satellite-originated events flow on the same file. **Then we watch for the next phantom session and it answers itself.**
+- **Stage 3 — only if you approve B**: `micro_wake_word` patch to expose probability. Separate flash.
+
+**Open decision points for Chris:**
+1. **A vs B** on `micro_wake_word` probability — ship MVP without and patch later, or patch now?
+2. **Single-flight vs staged** — Stage 1 + Stage 2 in one session, or land Stage 1 first to derisk?
+
+**Holding here.** No code written. No flash. Awaiting approval / changes / hold.
+
+
+

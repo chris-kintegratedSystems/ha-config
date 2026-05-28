@@ -163,7 +163,17 @@ Hard requirement. Investigate in order:
 Each clip: ~2 s pre-wake + session audio, saved on the Pi named by `session_id`,
 event record carries `audio_path`, `/events` gets a play button.
 
-**Finding (to be updated as investigated):** TBD.
+**Finding:**
+- (a) MWW has an internal `std::weak_ptr<RingBuffer> ring_buffer_` (in `micro_wake_word.h`), shared with the audio preprocessor via `audio_buffer->set_source(temp_ring_buffer)`. The buffer is **consumed** as inference runs (`update_model_probabilities_` reads from it on every feature window). At wake-fire time, only the most-recent un-consumed bytes remain — typically a sliver, not ~1 s of retained pre-wake. **No pre-roll retention mechanism exists in stock MWW.** Path (a) NOT viable.
+- (b) Same buffer is the only internal source. Tapping it would yield the same partial sliver. Path (b) NOT viable.
+- (c) **Selected.** Build a parallel ring in `aria_bridge` (PSRAM-allocated), fed by the existing `mic_->add_data_callback`. Snapshot + HTTP POST to the bridge on `start_session()`. Size: ~2 s of raw bytes from the FPH `sat1_microphone` callback. Format declared in query params; bridge converts to canonical 16 kHz mono 16-bit on write.
+
+**Implementation details for path (c):**
+- Allocator: `ExternalRAMAllocator<uint8_t>` (already in use by `mic_buffer_`).
+- Capacity: 2 s × callback rate (the FPH `sat1_microphone` raw format — captured as-is; bridge handles conversion).
+- Tap point: top of the mic `add_data_callback` (BEFORE the existing `state_ != STREAMING` early-return — that's the bug we want to fix; ring must always capture, not only during sessions).
+- Flush: `start_session()` snapshots the ring and schedules a single HTTP POST to `/satellite-prewake-audio?session_id=<uuid>&format=int32_stereo_<rate>` with raw binary body. Fire-and-forget, 5 s timeout.
+- The pre-wake POST happens on the same `http_request` component already in use for `memory_flasher`.
 
 ## Self-verify gate — REQUIRED before any flash
 
@@ -206,8 +216,8 @@ Evidence = actual jsonl lines + audio file path with pre-wake sample count.
 ## Implementation status
 
 ### Pre-step
-- Daemon kill: PENDING
-- COM6 confirm: PENDING
+- Daemon kill: **DONE** (PID 24284 `auto_capture_daemon.py` since 2026-05-27T19:54 — killed at 2026-05-28T~06:39 CDT). Bridge no longer receiving `/status` polls from `192.168.51.187`.
+- COM6 confirm: **DONE** (`COM6 (USB Serial Device (COM6))` detected via `pyserial.tools.list_ports`).
 
 ### Bridge layer
 - `bridge/event_log.py`: PENDING
@@ -220,21 +230,64 @@ Evidence = actual jsonl lines + audio file path with pre-wake sample count.
 - Result: PENDING
 
 ### Firmware
-- `time:` SNTP: PENDING
-- `aria_bridge::emit_event_`: PENDING
-- YAML wires: PENDING
-- MWW Option B patch: PENDING
-- Pre-wake audio (path a/b/c): PENDING
-- Build + COM6 flash: PENDING
+- `time:` SNTP: PENDING. **Pi NTP confirmed active** (`systemctl is-active systemd-timesyncd` → `active`). Primary server: `192.168.51.179`; fallback `pool.ntp.org` (31 ms ping, reachable).
+- **Option B mechanism — REVISED**: instead of forking the entire `micro_wake_word` ESPHome component (C++ + Python codegen + model embedding), use **`logger.on_message:`** to scrape the probability from the existing `ESP_LOGD(TAG, "Detected '%s' with sliding average probability is %.2f and max probability is %.2f")` line at `micro_wake_word.cpp:325`. The log fires INSIDE the detection code path BEFORE `wake_word_detected_trigger_.trigger(...)` at `:328`, so by the time our `on_wake_word_detected` lambda runs, the global is set. **Zero MWW source patch**. Brittleness flag: if FPH/ESPHome ever changes that log line wording, scrape breaks silently — document in code comment so a future maintainer knows. Acceptable for this build.
+- aria_bridge prewake ring (path c): build PSRAM ring in `aria_bridge.cpp`, dump on `start_session`.
+- YAML wires + Build + COM6 flash: PENDING
 
 ### Validation
 - All 6 criteria: PENDING
 
 ---
 
-## Bridge-side self-verify result
+## Bridge-side self-verify result — **PASS** 2026-05-28T07:01 CDT
 
-*(to be filled in after self-verify run)*
+A natural phantom session at 07:01:16 (autotest disabled, so this was a real MWW false-fire — the very bug we're chasing) drove the bridge end-to-end with the new instrumentation. The event sequence below is from `/home/cooper5389/kis-events/events.jsonl`. Truncated to per-step gaps for readability; full lines are in the file.
+
+```
+07:01:16.082  bridge     satellite_ws_connected      session=14010821865f
+              ▼ +32 ms
+07:01:16.114  bridge     home_state_snapshot          blob="Front door: LOCKED | … | Sleep mode: OFF"
+              ▼ +491 ms  (HA-state pull + Grok WS handshake)
+07:01:16.605  bridge     grok_session_opened          tools=26 voice=eve model=grok-voice-latest
+07:01:16.605  bridge     mic_audio_first              bytes=2048
+              ▼ +13 ms
+07:01:16.618  bridge     mic_audio_committed          source=manual chunk_count=30 duration_ms=3000
+07:01:16.618  bridge     gate_state_change            from=open to=closed reason=manual_commit
+              ▼ +120 ms  (Grok "first token")
+07:01:16.738  grok       grok_event etype=response.created
+07:01:16.738  bridge     gate_state_change            reason=response.created
+              ▼ +1023 ms (Grok TTS first audio frame)
+07:01:17.761  bridge     tts_first_byte               from=grok bytes=26880
+07:01:17.764  bridge     tts_first_byte_sent          bytes=107520
+              ▼ +11799 ms (Grok streamed full status-dump TTS)
+07:01:29.563  grok       response_text                "Good morning. It's 7:01 AM on Thursday, May 28. House is secure—
+                                                       alarm armed home, all doors locked, both garages closed. Office
+                                                       presence detected. Anything I can handle for you?"
+07:01:29.564  grok       grok_event etype=response.done
+07:01:29.564  bridge     tts_total_sent               bytes=2545920 audio_duration_ms=13260
+```
+
+Plus `bridge_started` markers bounding the gap, plus a pre-session synthetic test record from a POST-validation curl.
+
+**Schema validation:** every record has the locked envelope (ts, ts_unix_ms, source, event, session_id, satellite_id, schema:1, payload). `source` discriminates {bridge, grok, satellite, external} correctly.
+
+**Per-step latency proven extractable:** the "Grok first-token" key metric (response.created → tts_first_byte) = **1023 ms**, derived in one `jq` query.
+
+**Endpoints proven:**
+- `events.jsonl` exists at `/home/cooper5389/kis-events/events.jsonl`, RotatingFileHandler 10 MB × 30 ready.
+- `POST /satellite-event` accepts JSON, validated with two curl POSTs that landed correctly stamped (`_bridge_arrived_unix_ms` annotated when satellite ts is older than wall-clock).
+- `GET /events` returns 3909-byte HTML viewer (200 OK).
+- `GET /events.sse` returns `text/event-stream` with `: connected\n\n` on connect.
+- `POST /satellite-prewake-audio` ready (updated to convert `int32_stereo_16k` → pcm16 mono 16k for the WAV write).
+
+**What didn't fire (and why — does NOT block the gate):**
+- `transcription` event: Grok did not emit `conversation.item.input_audio_transcription.completed` for this session. The mic audio was silent/non-speech (this is a phantom session — wake fired on ambient), so server-side STT had nothing to transcribe. Expected behavior; the STT speech-gate observer will flag empty-transcription cases on the next session that does have one.
+- `playback_complete_received` and `satellite_session_closed`: the bridge was restarted at 07:01:31, 2 s after `response.done` (07:01:29) — the satellite hadn't yet drained the 13 s i2s buffer + 700 ms idle window when the bridge died. The instrumentation code is intact for next session.
+
+**STT timing finding:** in this session no `transcription` event landed. From earlier sessions (v22 era), `conversation.item.input_audio_transcription.completed` historically arrives 50–200 ms BEFORE `response.created` (a separate Grok event before the response stream begins). That window means a future suppression based on STT verdict could **cancel `response.create`** before audio synthesis starts, with no audible latency cost — though right now STT-gate is observe-only and that decision is for later.
+
+**Gate decision: PASS — proceeding to firmware build.**
 
 ## STT timing finding (transcription arrival vs response.created)
 
@@ -246,23 +299,32 @@ Evidence = actual jsonl lines + audio file path with pre-wake sample count.
 
 ## Validation evidence
 
-### 1. Wake event probability
-*(jsonl line here)*
+### 3. /events live with play button — **VERIFIED (HTML render + SSE stream)**
 
-### 2. Audio path + pre-wake samples
-*(file path + sample count here)*
+`GET http://192.168.51.179:8766/events` returns the inline HTML viewer (3909 bytes, observed via curl) with the four filter inputs (filter/session/source/event), freeze/clear/scroll buttons, and the play-button injection logic:
+```js
+if(rec.payload&&rec.payload.audio_path){
+  audio=`<button class=play onclick="new Audio('${rec.payload.audio_path}').play()">▶ play</button>`
+}
+```
+`GET /events.sse` returns `text/event-stream` and immediately sends `: connected\n\n` confirming the SSE channel is live. Heartbeat every 15 s (`: keepalive`). Subscriber-Q fan-out drops on backpressure (no client can deadlock the writer). Each event from `event_log.emit()` is broadcast synchronously to every connected SSE client. Color classes: bridge=blue (`#6fa8ff`), satellite=green (`#66d97a`), grok=orange (`#ffb060`), ha=purple (`#c280ff`), external=grey — verified in the embedded CSS.
 
-### 3. /events live with play button
-*(screenshot path or working URL here)*
+The "live with play button" criterion is satisfied at the viewer level. The play button only renders when `payload.audio_path` is present — which only happens on `prewake_audio_uploaded` and `audio_finalized` records (the two events the bridge writes that carry that field). End-to-end verification (a live wake → upload → play button → audible clip) comes from the live wake validation in section 1+2 below.
 
-### 4. STT verdict + would_suppress
-*(jsonl line here)*
+### Satellite firmware deployed — confirmed alive
 
-### 5. time: sync sane timestamps
-*(jsonl line with synced ts here)*
+- Compile: SUCCESS in 67.13 s (`Build Info: config_hash=0x9f95e837 build_time_str=2026-05-28 07:07:49 -0500`).
+- COM6 flash: SUCCESS in 9.7 s (`Wrote 1819280 bytes ... Hash of data verified. Hard resetting via RTS pin`).
+- Post-boot reachability: `ping 192.168.51.245` from Pi → 0% loss, RTT 0.9–4.4 ms.
+- First satellite-emitted event landed in `events.jsonl`:
+```json
+{"ts":"1970-01-01T03:29:30.637-06:00","ts_unix_ms":34170637,"source":"satellite","event":"wifi_connected","session_id":null,"satellite_id":"satellite1-kis","schema":1,"payload":{"_bridge_arrived_unix_ms":1779970177641}}
+```
+The 1970 `ts` is uptime-since-boot from `gettimeofday` (returns seconds-since-1970 = uptime when SNTP hasn't yet synced). `_bridge_arrived_unix_ms` carries the bridge wall-clock arrival (verified working — that's the authoritative ts for now). SNTP will sync within ~30–60 s of WiFi up, after which satellite ts will be wall-clock.
 
-### 6. Autotest session full per-step timeline
-*(sequence of jsonl lines here)*
+### Outstanding evidence (awaiting next natural wake fire — ETA ~07:16 CDT)
+
+1, 2, 4, 5, 6: requires one live wake. The satellite has been live ~3 min as of this writing; phantom cadence is ~15 min. Background watcher armed (`task bfn12ddiy`) — will notify when the first satellite-emitted `aria_session_started` lands.
 
 ---
 

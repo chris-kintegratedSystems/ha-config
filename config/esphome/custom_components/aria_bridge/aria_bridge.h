@@ -51,8 +51,23 @@ class ARIABridge : public Component {
 #endif
 
   void start_session();
+  void start_session_with_uuid(const std::string &uuid);   // v23: caller-provided session_id (from YAML)
   void stop_session();
   bool is_active() const { return this->state_ != BridgeState::IDLE; }
+
+  // v23: pre-wake audio audit substrate — PSRAM ring fed unconditionally by the mic callback.
+  std::vector<uint8_t> snapshot_prewake();
+  std::string current_session_uuid() const { return this->session_uuid_; }
+
+  // v23: bridge event emit. Source is implicitly "satellite"; fire-and-forget HTTP POST queued
+  // for the event_post_task_. payload_json is the inner JSON object (e.g. {"k":"v"}) — emit
+  // builds the full record envelope around it.
+  void emit_event(const std::string &event_type, const std::string &payload_json);
+
+  void set_event_post_url(const std::string &url) { this->event_post_url_ = url; }   // v23: from codegen
+  void set_prewake_post_url(const std::string &url) { this->prewake_post_url_ = url; }
+  void set_prewake_seconds(int s) { this->prewake_seconds_ = s; }
+  void set_satellite_id(const std::string &id) { this->satellite_id_ = id; }
 
   // v21: LED state-machine subscription API (used by the per-trigger glue classes below).
   void add_on_listening_start_callback(std::function<void()> &&cb) { this->on_listening_start_cb_.add(std::move(cb)); }
@@ -118,6 +133,35 @@ class ARIABridge : public Component {
   CallbackManager<void()> on_responding_start_cb_;
   CallbackManager<void()> on_error_cb_;
   CallbackManager<void()> on_idle_cb_;
+
+  // v23: pre-wake audio ring (PSRAM). The mic callback writes here UNCONDITIONALLY (not gated
+  // by session state) so that on start_session we can flush the last N seconds of audio that
+  // led up to the wake-word firing — the audit substrate for tuning the wake pipeline.
+  std::vector<uint8_t, ExternalRAMAllocator<uint8_t>> prewake_ring_;
+  size_t prewake_head_{0};
+  bool prewake_full_{false};
+  std::mutex prewake_mutex_;
+  int prewake_seconds_{2};
+
+  std::string session_uuid_;
+  std::string event_post_url_;     // "http://192.168.51.179:8766/satellite-event"
+  std::string prewake_post_url_;   // "http://192.168.51.179:8766/satellite-prewake-audio"
+  std::string satellite_id_{"satellite1-kis"};
+
+  // v23: outgoing event queue + worker task — drained over an HTTP POST per event,
+  // fire-and-forget. Independent of the session WS so events flow even when no session.
+  struct OutgoingEvent { std::string event; std::string payload_json; std::string session_id; };
+  std::vector<OutgoingEvent> event_queue_;
+  std::mutex event_queue_mutex_;
+  std::atomic<TaskHandle_t> event_post_task_handle_{nullptr};
+  std::atomic<bool> event_post_task_running_{false};
+
+  // v23: helpers
+  void prewake_ring_write_(const uint8_t *data, size_t len);
+  static void event_post_task_(void *param);
+  static void prewake_upload_task_(void *param);                        // dispatched per-session
+  bool http_post_json_(const std::string &path_with_qs, const std::string &body) const;
+  bool http_post_binary_(const std::string &path_with_qs, const uint8_t *body, size_t len) const;
 };
 
 // v21: ESPHome trigger glue — each instance subscribes to the matching ARIABridge callback and

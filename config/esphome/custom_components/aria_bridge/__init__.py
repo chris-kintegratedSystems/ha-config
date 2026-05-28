@@ -32,6 +32,11 @@ CONF_ON_THINKING_START = "on_thinking_start"
 CONF_ON_RESPONDING_START = "on_responding_start"
 CONF_ON_ERROR = "on_error"
 CONF_ON_IDLE = "on_idle"
+# v23: event-log POST + pre-wake audio upload destinations + satellite_id stamp
+CONF_EVENT_POST_URL = "event_post_url"
+CONF_PREWAKE_POST_URL = "prewake_post_url"
+CONF_PREWAKE_SECONDS = "prewake_seconds"
+CONF_SATELLITE_ID = "satellite_id"
 
 
 def _speaker_schema():
@@ -45,6 +50,10 @@ CONFIG_SCHEMA = cv.Schema({
     cv.Required(CONF_MICROPHONE_ID): cv.use_id(microphone.Microphone),
     cv.Optional(CONF_SPEAKER_ID): _speaker_schema(),
     cv.Optional(CONF_SAMPLE_RATE, default=16000): cv.int_,
+    cv.Optional(CONF_EVENT_POST_URL, default=""): cv.string,
+    cv.Optional(CONF_PREWAKE_POST_URL, default=""): cv.string,
+    cv.Optional(CONF_PREWAKE_SECONDS, default=2): cv.int_range(min=0, max=10),
+    cv.Optional(CONF_SATELLITE_ID, default="satellite1-kis"): cv.string,
     # v21: each trigger fires when the phase is ENTERED (not while it's active).
     cv.Optional(CONF_ON_LISTENING_START): automation.validate_automation({
         cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ListeningStartTrigger),
@@ -70,6 +79,10 @@ async def to_code(config):
 
     cg.add(var.set_bridge_url(config[CONF_BRIDGE_URL]))
     cg.add(var.set_sample_rate(config[CONF_SAMPLE_RATE]))
+    cg.add(var.set_event_post_url(config[CONF_EVENT_POST_URL]))
+    cg.add(var.set_prewake_post_url(config[CONF_PREWAKE_POST_URL]))
+    cg.add(var.set_prewake_seconds(config[CONF_PREWAKE_SECONDS]))
+    cg.add(var.set_satellite_id(config[CONF_SATELLITE_ID]))
 
     mic = await cg.get_variable(config[CONF_MICROPHONE_ID])
     cg.add(var.set_microphone(mic))

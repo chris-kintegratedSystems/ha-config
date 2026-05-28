@@ -59,8 +59,23 @@ external_components:
       path: custom_components
     components: [aria_bridge]
 
+# v23: scrape the MWW detection-probability log line into globals so the on_wake_word_detected
+# handler can include the value in its emitted event. Zero MWW source patch — relies on the
+# stable ESP_LOGD message format at `micro_wake_word.cpp:325`. If FPH/ESPHome changes that line,
+# the scrape silently fails (probability falls back to -1.0). Document at any future bump.
 logger:
   level: DEBUG
+  on_message:
+    - level: DEBUG
+      then:
+        - lambda: |-
+            // tag == "micro_wake_word", message == "Detected '<name>' with sliding average probability is 0.92 and max probability is 0.95"
+            if (tag == nullptr || strcmp(tag, "micro_wake_word") != 0) return;
+            const char *p = message;
+            const char *aidx = strstr(p, "average probability is ");
+            const char *midx = strstr(p, "max probability is ");
+            if (aidx) id(last_wake_prob_avg) = strtof(aidx + 23, nullptr);
+            if (midx) id(last_wake_prob_max) = strtof(midx + 19, nullptr);
 
 api:
 
@@ -74,8 +89,26 @@ wifi:
   power_save_mode: none          # v9: disable WiFi power-save — fixes idle ping floor (34ms->2ms)
   fast_connect: true             # v10: skip scan, lock to one mesh AP (stop roaming churn)
   post_connect_roaming: false    # v10: don't roam between Casadekup mesh BSSIDs (steady-state stall hypothesis)
+  on_connect:
+    - lambda: |-
+        // v23 NOTE: ESPHome ESP-IDF doesn't expose Arduino's WiFi.SSID()/RSSI() here. Could
+        // wire the wifi component pointer if rssi/ssid is needed later; MVP just emits the edge.
+        id(aria).emit_event("wifi_connected", "{}");
+  on_disconnect:
+    - lambda: |-
+        id(aria).emit_event("wifi_disconnected", "{}");
 
 safe_mode:
+
+# v23: SNTP — Pi (192.168.51.179) runs systemd-timesyncd; pool.ntp.org as fallback. Required so
+# satellite-emitted events carry a wall-clock ts that aligns with the bridge's (bridge timestamps
+# arrival regardless, but matched satellite ts makes per-step latency math sub-millisecond clean).
+time:
+  - platform: sntp
+    id: ntp_time
+    servers:
+      - 192.168.51.179
+      - pool.ntp.org
 
 # --- TAS2780 Power Tracking ---
 globals:
@@ -87,6 +120,18 @@ globals:
     type: int
     restore_value: yes
     initial_value: '0'
+  - id: last_wake_prob_avg           # v23: MWW probability scrape destinations (see logger.on_message)
+    type: float
+    restore_value: no
+    initial_value: '-1.0f'
+  - id: last_wake_prob_max
+    type: float
+    restore_value: no
+    initial_value: '-1.0f'
+  - id: last_session_uuid            # v23: 12-hex satellite-generated session_id, stitches WS + prewake + events
+    type: std::string
+    restore_value: no
+    initial_value: '""'
 
 # --- TEST-ONLY (v18): wake-word bypass for autonomous testing ---
 # Starts an ARIA session every 90s when idle so the loop can exercise the bridge/speaker
@@ -257,10 +302,26 @@ micro_wake_word:
   stop_after_detection: false
   on_wake_word_detected:
     - logger.log: "Wake word detected — starting ARIA session"
-    # v21: LED is now driven by aria_bridge's on_listening_start trigger (fires inside start_session()),
-    # not from here — this lets the same blue pulse fire on both wake AND on bridge-says-done (next-turn listening).
+    # v23: generate session_uuid + emit wake_word_detected with scraped probability + start
+    # the session with that uuid (which triggers pre-wake ring snapshot + upload).
     - lambda: |-
-        id(aria).start_session();
+        // 12-hex satellite-generated UUID (32-bit hex × 2 = 12 chars). random_uint32() seeded by ESPHome.
+        char uuid[13];
+        snprintf(uuid, sizeof(uuid), "%08x%04x",
+                 (unsigned) random_uint32(), (unsigned)(random_uint32() & 0xFFFF));
+        id(last_session_uuid) = std::string(uuid);
+        char payload[160];
+        snprintf(payload, sizeof(payload),
+                 "{\"wake_word\":\"%s\",\"probability\":%.3f,\"max_probability\":%.3f}",
+                 wake_word.c_str(),
+                 id(last_wake_prob_avg), id(last_wake_prob_max));
+        id(aria).emit_event("wake_word_detected", std::string(payload));
+        // start_session_with_uuid snapshots the prewake ring, fires the upload task, then
+        // kicks off the WS connect (which carries ?session_id=<uuid> so bridge stitches).
+        id(aria).start_session_with_uuid(id(last_session_uuid));
+        // reset the probability globals so a missed-scrape on the next fire shows as -1
+        id(last_wake_prob_avg) = -1.0f;
+        id(last_wake_prob_max) = -1.0f;
 
 # --- ARIA Bridge (mic + speaker via resampler) ---
 # v21: phase triggers drive the LED state machine. Blue family for normal phases (LISTENING →
@@ -271,6 +332,11 @@ aria_bridge:
   microphone_id: sat1_mics
   speaker_id: sat1_speaker
   sample_rate: 16000
+  # v23: unified event log + pre-wake audio audit substrate
+  event_post_url: "http://192.168.51.179:8766/satellite-event"
+  prewake_post_url: "http://192.168.51.179:8766/satellite-prewake-audio"
+  prewake_seconds: 2
+  satellite_id: "satellite1-kis"
   on_listening_start:
     - light.turn_on:
         id: led_ring
