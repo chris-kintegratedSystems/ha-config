@@ -13,6 +13,40 @@ namespace aria_bridge {
 
 static const char *const TAG = "aria_bridge";
 
+// v21: fire callback ONLY when the phase actually changes. atomic<>::exchange returns the old
+// value, so the callback is dispatched at most once per LISTENING→THINKING→RESPONDING transition
+// (multiple binary audio frames after first won't re-fire on_responding_start, etc).
+void ARIABridge::fire_listening_() {
+  if (this->led_phase_.exchange(LedPhase::LISTENING) != LedPhase::LISTENING) {
+    ESP_LOGD(TAG, "led: -> LISTENING");
+    this->on_listening_start_cb_.call();
+  }
+}
+void ARIABridge::fire_thinking_() {
+  if (this->led_phase_.exchange(LedPhase::THINKING) != LedPhase::THINKING) {
+    ESP_LOGD(TAG, "led: -> THINKING");
+    this->on_thinking_start_cb_.call();
+  }
+}
+void ARIABridge::fire_responding_() {
+  if (this->led_phase_.exchange(LedPhase::RESPONDING) != LedPhase::RESPONDING) {
+    ESP_LOGD(TAG, "led: -> RESPONDING");
+    this->on_responding_start_cb_.call();
+  }
+}
+void ARIABridge::fire_error_() {
+  if (this->led_phase_.exchange(LedPhase::ERROR_PHASE) != LedPhase::ERROR_PHASE) {
+    ESP_LOGD(TAG, "led: -> ERROR");
+    this->on_error_cb_.call();
+  }
+}
+void ARIABridge::fire_idle_() {
+  if (this->led_phase_.exchange(LedPhase::IDLE) != LedPhase::IDLE) {
+    ESP_LOGD(TAG, "led: -> IDLE");
+    this->on_idle_cb_.call();
+  }
+}
+
 void ARIABridge::setup() {
   ESP_LOGI(TAG, "ARIA Bridge initialized — URL: %s", this->bridge_url_.c_str());
 
@@ -43,6 +77,7 @@ void ARIABridge::loop() {
 
   if (this->state_ == BridgeState::ERROR) {
     ESP_LOGW(TAG, "Connection error — stopping session");
+    this->fire_error_();     // v21: flash red briefly before stop_session drives back to IDLE
     this->stop_session();
     return;
   }
@@ -65,8 +100,10 @@ void ARIABridge::loop() {
     if (this->spk_ != nullptr && !this->spk_pending_.empty()) {
       this->spk_->start();
       size_t w = this->spk_->play(this->spk_pending_.data(), this->spk_pending_.size());
-      if (w > 0)
+      if (w > 0) {
         this->spk_pending_.erase(this->spk_pending_.begin(), this->spk_pending_.begin() + w);
+        this->last_spk_play_ms_ = now;     // v20: i2s buffer received more bytes — reset drain clock
+      }
     }
     bool can_read = (this->spk_ == nullptr) || this->spk_pending_.empty();
 #else
@@ -78,10 +115,14 @@ void ARIABridge::loop() {
       if (len > 0) {
         this->last_activity_ms_ = now;
         this->state_ = BridgeState::RECEIVING;
+        this->playback_complete_sent_ = false;  // v20: new audio arrived — invalidate any stale "drained" state
+        this->fire_responding_();               // v21: TTS audio is arriving → RESPONDING (no-op after first frame)
 #ifdef USE_SPEAKER
         if (this->spk_ != nullptr) {
           this->spk_->start();
           size_t w = this->spk_->play(buf, static_cast<size_t>(len));
+          if (w > 0)
+            this->last_spk_play_ms_ = now;  // v20: i2s buffer received bytes (even partial)
           if (w < static_cast<size_t>(len)) {
             this->spk_pending_.assign(buf + w, buf + len);  // hold remainder; stop reading (backpressure)
             break;
@@ -96,6 +137,22 @@ void ARIABridge::loop() {
         break;  // no more WS frames available this iteration
       }
     }
+
+#ifdef USE_SPEAKER
+    // v20: emit playback_complete once when the i2s buffer has had time to drain
+    // (PLAYBACK_IDLE_MS = i2s buffer + acoustic margin). The bridge keeps the half-duplex
+    // gate closed until it sees this, so the satellite mic doesn't echo its own TTS into
+    // server_vad and trigger a runaway response chain. .exchange(true) makes the send
+    // exactly-once per playback session; reset on next spk_->play() or on stop_session.
+    if (this->spk_ != nullptr) {
+      uint32_t lp = this->last_spk_play_ms_.load();
+      if (lp > 0 && this->spk_pending_.empty() &&
+          (now - lp) >= PLAYBACK_IDLE_MS &&
+          !this->playback_complete_sent_.exchange(true)) {
+        this->send_playback_complete_();
+      }
+    }
+#endif
   }
 }
 
@@ -276,6 +333,71 @@ bool ARIABridge::ws_send_binary_(const uint8_t *data, size_t len) {
   return ok;
 }
 
+// v20: send a WebSocket TEXT frame (opcode 0x1). Mirrors ws_send_binary_ framing/masking;
+// kept as a separate method to avoid touching the proven binary-send path.
+bool ARIABridge::ws_send_text_(const char *data, size_t len) {
+  if (this->sock_fd_ < 0) return false;
+
+  uint8_t header[4];
+  size_t header_len;
+  header[0] = 0x81;                                       // FIN + text opcode
+  if (len < 126) {
+    header[1] = static_cast<uint8_t>(len | 0x80);
+    header_len = 2;
+  } else {
+    header[1] = 126 | 0x80;
+    header[2] = static_cast<uint8_t>(len >> 8);
+    header[3] = static_cast<uint8_t>(len & 0xFF);
+    header_len = 4;
+  }
+  uint8_t mask[4] = {0x12, 0x34, 0x56, 0x78};
+
+  auto send_all = [this](const void *buf, size_t n) -> bool {
+    const uint8_t *p = static_cast<const uint8_t *>(buf);
+    size_t remaining = n;
+    while (remaining > 0) {
+      int sent = lwip_send(this->sock_fd_, p, remaining, 0);
+      if (sent > 0) {
+        p += sent;
+        remaining -= sent;
+      } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        vTaskDelay(pdMS_TO_TICKS(1));
+      } else {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  if (!send_all(header, header_len)) return false;
+  if (!send_all(mask, 4)) return false;
+
+  uint8_t *masked = static_cast<uint8_t *>(malloc(len));
+  if (!masked) return false;
+  for (size_t i = 0; i < len; i++)
+    masked[i] = static_cast<uint8_t>(data[i]) ^ mask[i % 4];
+  bool ok = send_all(masked, len);
+  free(masked);
+  return ok;
+}
+
+// v20: build + emit the playback_complete signal. Logged with the actual drain interval so
+// post-mortem journal grep can verify it fired at the right moment.
+void ARIABridge::send_playback_complete_() {
+  char msg[80];
+  uint32_t now = millis();
+  int n = snprintf(msg, sizeof(msg), "{\"type\":\"playback_complete\",\"ts\":%lu}",
+                   (unsigned long) now);
+  if (n <= 0 || n >= (int) sizeof(msg)) return;
+  if (this->ws_send_text_(msg, static_cast<size_t>(n))) {
+    ESP_LOGI(TAG, "playback_complete sent (idle %lums)",
+             (unsigned long) (now - this->last_spk_play_ms_.load()));
+  } else {
+    ESP_LOGW(TAG, "playback_complete send failed");
+    this->playback_complete_sent_ = false;     // allow retry on next loop iteration
+  }
+}
+
 // Read exactly n bytes (handles partial TCP reads + EAGAIN with a bounded yield).
 // Returns bytes read (== n on success). Guarantees frame fields are fully consumed
 // so a partial read can never desync the WS frame stream (v16: fixes TTS clipping).
@@ -360,8 +482,10 @@ int ARIABridge::ws_recv_frame_(uint8_t *buf, size_t max_len) {
       ESP_LOGI(TAG, "Bridge status: %s", msg.c_str());
       if (msg.find("\"done\"") != std::string::npos) {
         this->state_ = BridgeState::STREAMING;  // ARIA finished — resume mic
+        this->fire_listening_();                 // v21: back to listening for follow-up
       } else if (msg.find("\"processing\"") != std::string::npos) {
         this->state_ = BridgeState::RECEIVING;  // pause mic, listen for TTS (half-duplex)
+        this->fire_thinking_();                  // v21: Grok is generating a response
       } else if (msg.find("\"timeout\"") != std::string::npos) {
         return -1;
       }
@@ -462,11 +586,14 @@ void ARIABridge::start_session() {
     return;
   }
   ESP_LOGI(TAG, "Wake word detected — starting ARIA session");
+  this->fire_listening_();        // v21: light up immediately so the user sees feedback at wake (not after the WS handshake)
   this->state_ = BridgeState::CONNECTING;
   this->session_start_ms_ = millis();
   this->last_activity_ms_ = millis();
   this->mic_dropped_bytes_ = 0;  // v11: reset per-session stats
   this->bytes_sent_ = 0;
+  this->last_spk_play_ms_ = 0;          // v20: no playback yet — guard send_playback_complete_
+  this->playback_complete_sent_ = false;
 
   {
     std::lock_guard<std::mutex> lock(this->mic_mutex_);
@@ -504,7 +631,10 @@ void ARIABridge::stop_session() {
   }
 #endif
   this->spk_pending_.clear();  // v18: drop any held speaker remainder so it can't leak to the next session
+  this->last_spk_play_ms_ = 0;          // v20: clean slate for the next session
+  this->playback_complete_sent_ = false;
   this->state_ = BridgeState::IDLE;
+  this->fire_idle_();                   // v21: turn LED off at the end of every session
 }
 
 }  // namespace aria_bridge

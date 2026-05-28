@@ -2,6 +2,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/automation.h"
 #include "esphome/components/microphone/microphone.h"
 #ifdef USE_SPEAKER
 #include "esphome/components/speaker/speaker.h"
@@ -12,6 +13,7 @@
 #include <vector>
 #include <mutex>
 #include <atomic>
+#include <functional>
 
 namespace esphome {
 namespace aria_bridge {
@@ -22,6 +24,17 @@ enum class BridgeState : uint8_t {
   STREAMING,
   RECEIVING,
   ERROR,
+};
+
+// v21: LED phase machine — drives the on_*_start / on_idle / on_error triggers (YAML wires
+// each to a light effect). Distinct from BridgeState so wake-fires-immediately can be modeled
+// without coupling to the WS state machine.
+enum class LedPhase : uint8_t {
+  IDLE,
+  LISTENING,
+  THINKING,
+  RESPONDING,
+  ERROR_PHASE,
 };
 
 class ARIABridge : public Component {
@@ -41,13 +54,29 @@ class ARIABridge : public Component {
   void stop_session();
   bool is_active() const { return this->state_ != BridgeState::IDLE; }
 
+  // v21: LED state-machine subscription API (used by the per-trigger glue classes below).
+  void add_on_listening_start_callback(std::function<void()> &&cb) { this->on_listening_start_cb_.add(std::move(cb)); }
+  void add_on_thinking_start_callback(std::function<void()> &&cb)  { this->on_thinking_start_cb_.add(std::move(cb)); }
+  void add_on_responding_start_callback(std::function<void()> &&cb){ this->on_responding_start_cb_.add(std::move(cb)); }
+  void add_on_error_callback(std::function<void()> &&cb)           { this->on_error_cb_.add(std::move(cb)); }
+  void add_on_idle_callback(std::function<void()> &&cb)            { this->on_idle_cb_.add(std::move(cb)); }
+
  protected:
+  // v21: fire-on-entry helpers — call the registered automations only when the phase changes.
+  void fire_listening_();
+  void fire_thinking_();
+  void fire_responding_();
+  void fire_error_();
+  void fire_idle_();
+
   static void connect_task_(void *param);
   static void send_task_(void *param);
   bool tcp_connect_();
   bool ws_handshake_();
   void ws_disconnect_();
   bool ws_send_binary_(const uint8_t *data, size_t len);
+  bool ws_send_text_(const char *data, size_t len);              // v20: send text frame (playback_complete)
+  void send_playback_complete_();                                // v20: tell bridge speaker drained
   int ws_recv_frame_(uint8_t *buf, size_t max_len);
   int recv_exact_(uint8_t *buf, size_t n, uint32_t timeout_ms);  // atomic read (no frame desync)
   bool parse_url_(std::string &host, uint16_t &port, std::string &path);
@@ -74,6 +103,54 @@ class ARIABridge : public Component {
   std::vector<uint8_t, ExternalRAMAllocator<uint8_t>> mic_buffer_;
   std::mutex mic_mutex_;
   std::vector<uint8_t> spk_pending_;  // v18: speaker bytes not yet accepted (backpressure, no drop)
+
+  // v20: playback-complete signal — emitted when the i2s buffer has fully drained, so the
+  // bridge can keep its half-duplex gate closed until the speaker is actually silent (response.done
+  // fires when Grok finishes SENDING audio, before the satellite has finished PLAYING it).
+  std::atomic<uint32_t> last_spk_play_ms_{0};       // millis() of last successful spk_->play() w/ bytes accepted
+  std::atomic<bool> playback_complete_sent_{false}; // ensure exactly one signal per playback session
+  static constexpr uint32_t PLAYBACK_IDLE_MS = 700; // 500ms i2s buffer drain + 200ms acoustic margin
+
+  // v21: LED phase machine + callback fan-out (one CallbackManager per phase entry).
+  std::atomic<LedPhase> led_phase_{LedPhase::IDLE};
+  CallbackManager<void()> on_listening_start_cb_;
+  CallbackManager<void()> on_thinking_start_cb_;
+  CallbackManager<void()> on_responding_start_cb_;
+  CallbackManager<void()> on_error_cb_;
+  CallbackManager<void()> on_idle_cb_;
+};
+
+// v21: ESPHome trigger glue — each instance subscribes to the matching ARIABridge callback and
+// fires the Trigger<> when the phase entered. YAML attaches automations via on_listening_start etc.
+class ListeningStartTrigger : public Trigger<> {
+ public:
+  explicit ListeningStartTrigger(ARIABridge *parent) {
+    parent->add_on_listening_start_callback([this]() { this->trigger(); });
+  }
+};
+class ThinkingStartTrigger : public Trigger<> {
+ public:
+  explicit ThinkingStartTrigger(ARIABridge *parent) {
+    parent->add_on_thinking_start_callback([this]() { this->trigger(); });
+  }
+};
+class RespondingStartTrigger : public Trigger<> {
+ public:
+  explicit RespondingStartTrigger(ARIABridge *parent) {
+    parent->add_on_responding_start_callback([this]() { this->trigger(); });
+  }
+};
+class ErrorTrigger : public Trigger<> {
+ public:
+  explicit ErrorTrigger(ARIABridge *parent) {
+    parent->add_on_error_callback([this]() { this->trigger(); });
+  }
+};
+class IdleTrigger : public Trigger<> {
+ public:
+  explicit IdleTrigger(ARIABridge *parent) {
+    parent->add_on_idle_callback([this]() { this->trigger(); });
+  }
 };
 
 }  // namespace aria_bridge

@@ -248,6 +248,7 @@ speaker:
 micro_wake_word:
   models:
     - model: hey_jarvis
+      probability_cutoff: 0.7   # v19 experiment: 0.97 rejects played audio; lower to let laptop-speaker prompts fire (tune up after)
   vad:
   microphone:
     microphone: sat1_mics
@@ -256,19 +257,55 @@ micro_wake_word:
   stop_after_detection: false
   on_wake_word_detected:
     - logger.log: "Wake word detected — starting ARIA session"
-    - light.turn_on:
-        id: led_ring
-        effect: "Listening"
+    # v21: LED is now driven by aria_bridge's on_listening_start trigger (fires inside start_session()),
+    # not from here — this lets the same blue pulse fire on both wake AND on bridge-says-done (next-turn listening).
     - lambda: |-
         id(aria).start_session();
 
 # --- ARIA Bridge (mic + speaker via resampler) ---
+# v21: phase triggers drive the LED state machine. Blue family for normal phases (LISTENING →
+# THINKING → RESPONDING), red for actual errors. Returns to IDLE (off) on every session end.
 aria_bridge:
   id: aria
   bridge_url: "ws://192.168.51.179:8766/satellite"
   microphone_id: sat1_mics
   speaker_id: sat1_speaker
   sample_rate: 16000
+  on_listening_start:
+    - light.turn_on:
+        id: led_ring
+        red: 25%
+        green: 50%
+        blue: 100%             # ~#4080FF — mid blue, slow breathing
+        brightness: 50%
+        effect: "Listening Blue Pulse"
+  on_thinking_start:
+    - light.turn_on:
+        id: led_ring
+        red: 12%
+        green: 38%
+        blue: 100%             # ~#2060FF — brighter blue, medium chase
+        brightness: 70%
+        effect: "Thinking Blue Chase"
+  on_responding_start:
+    - light.turn_on:
+        id: led_ring
+        red: 0%
+        green: 25%
+        blue: 100%             # ~#0040FF — brightest blue, faster chase
+        brightness: 90%
+        effect: "Responding Blue Chase"
+  on_error:
+    - light.turn_on:
+        id: led_ring
+        red: 100%
+        green: 0%
+        blue: 0%
+        brightness: 80%
+        effect: "Error Red Pulse"
+  on_idle:
+    - light.turn_off:
+        id: led_ring
 
 # --- LED Ring (24x WS2812, GPIO21) ---
 light:
@@ -278,8 +315,27 @@ light:
     num_leds: 24
     chipset: WS2812
     rgb_order: GRB
+    default_transition_length: 100ms
     effects:
-      - addressable_rainbow:
-          name: "Listening"
-          speed: 30
-          width: 24
+      # v21: phase effects — colors set per-call from aria_bridge triggers above, so these are
+      # color-agnostic motion/timing profiles. Blue for normal states; red used only via Error.
+      - pulse:
+          name: "Listening Blue Pulse"
+          transition_length: 1500ms
+          update_interval: 1500ms
+          min_brightness: 15%
+          max_brightness: 60%
+      - addressable_scan:
+          name: "Thinking Blue Chase"
+          move_interval: 80ms
+          scan_width: 4
+      - addressable_scan:
+          name: "Responding Blue Chase"
+          move_interval: 40ms
+          scan_width: 6
+      - pulse:
+          name: "Error Red Pulse"
+          transition_length: 200ms
+          update_interval: 200ms
+          min_brightness: 30%
+          max_brightness: 100%

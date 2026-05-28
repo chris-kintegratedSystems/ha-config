@@ -6,7 +6,8 @@ for end-to-end Grok Realtime voice processing.
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.const import CONF_ID
+from esphome import automation
+from esphome.const import CONF_ID, CONF_TRIGGER_ID
 from esphome.components import microphone
 
 DEPENDENCIES = ["microphone"]
@@ -15,10 +16,22 @@ AUTO_LOAD = []
 aria_bridge_ns = cg.esphome_ns.namespace("aria_bridge")
 ARIABridge = aria_bridge_ns.class_("ARIABridge", cg.Component)
 
+# v21: ESPHome Trigger<> classes — YAML wires light effects to each phase entry.
+ListeningStartTrigger = aria_bridge_ns.class_("ListeningStartTrigger", automation.Trigger.template())
+ThinkingStartTrigger = aria_bridge_ns.class_("ThinkingStartTrigger", automation.Trigger.template())
+RespondingStartTrigger = aria_bridge_ns.class_("RespondingStartTrigger", automation.Trigger.template())
+ErrorTrigger = aria_bridge_ns.class_("ErrorTrigger", automation.Trigger.template())
+IdleTrigger = aria_bridge_ns.class_("IdleTrigger", automation.Trigger.template())
+
 CONF_BRIDGE_URL = "bridge_url"
 CONF_MICROPHONE_ID = "microphone_id"
 CONF_SPEAKER_ID = "speaker_id"
 CONF_SAMPLE_RATE = "sample_rate"
+CONF_ON_LISTENING_START = "on_listening_start"
+CONF_ON_THINKING_START = "on_thinking_start"
+CONF_ON_RESPONDING_START = "on_responding_start"
+CONF_ON_ERROR = "on_error"
+CONF_ON_IDLE = "on_idle"
 
 
 def _speaker_schema():
@@ -32,6 +45,22 @@ CONFIG_SCHEMA = cv.Schema({
     cv.Required(CONF_MICROPHONE_ID): cv.use_id(microphone.Microphone),
     cv.Optional(CONF_SPEAKER_ID): _speaker_schema(),
     cv.Optional(CONF_SAMPLE_RATE, default=16000): cv.int_,
+    # v21: each trigger fires when the phase is ENTERED (not while it's active).
+    cv.Optional(CONF_ON_LISTENING_START): automation.validate_automation({
+        cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ListeningStartTrigger),
+    }),
+    cv.Optional(CONF_ON_THINKING_START): automation.validate_automation({
+        cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ThinkingStartTrigger),
+    }),
+    cv.Optional(CONF_ON_RESPONDING_START): automation.validate_automation({
+        cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(RespondingStartTrigger),
+    }),
+    cv.Optional(CONF_ON_ERROR): automation.validate_automation({
+        cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ErrorTrigger),
+    }),
+    cv.Optional(CONF_ON_IDLE): automation.validate_automation({
+        cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(IdleTrigger),
+    }),
 }).extend(cv.COMPONENT_SCHEMA)
 
 
@@ -48,3 +77,10 @@ async def to_code(config):
     if CONF_SPEAKER_ID in config:
         spk = await cg.get_variable(config[CONF_SPEAKER_ID])
         cg.add(var.set_speaker(spk))
+
+    # v21: register trigger automations — each Trigger ctor subscribes to its CallbackManager.
+    for key in (CONF_ON_LISTENING_START, CONF_ON_THINKING_START, CONF_ON_RESPONDING_START,
+                CONF_ON_ERROR, CONF_ON_IDLE):
+        for conf in config.get(key, []):
+            trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+            await automation.build_automation(trigger, [], conf)

@@ -362,3 +362,93 @@ Chris: "Until you can trigger the satellite with my laptop speaker and properly 
 - micro_wake_word config is correct (channels:1, gain_factor:6, identical to FPH, uses the proper wrapper) and the boot log shows it running (`DETECTING_WAKE_WORD`, inference task running). Yet 3 clear "Hey Jarvis" playbacks (v16 ×2, fix-test ×1) produced no detection / no session. Bridge-side fix does not touch on-device wake detection.
 - Ranked hypotheses: (a) acoustic coupling — satellite mic isn't receiving the BO-speaker playback strongly enough for the strict 0.97 cutoff (positioning/volume/orientation); (b) wake-channel layout — micro_wake_word reads channel 1; if the room mic is on a different channel on this XMOS build, it hears nothing; (c) XMOS mic-audio quality on the wake channel.
 - Recommended escalating diagnosis (build-free first): (1) tighten acoustic coupling — BO speaker right at the satellite mic, high volume — and re-run; if it fires, coupling was it and we can finally validate the mic-format fix. (2) If still no fire: a diagnostic firmware build that auto-starts an aria_bridge session (bypass wake) + logs both mic channels' levels — validates the mic-format fix independently AND reveals the channel layout / whether the satellite mic captures real room audio.
+
+---
+
+## 2026-05-27 evening — Bug #2 validated + LED state-machine characterization
+
+### Bug #2 (half-duplex feedback) — FIXED & VALIDATED (Option A, v20)
+- **Firmware (aria_bridge.cpp / .h, v20):** added `last_spk_play_ms_` + `playback_complete_sent_` atomic state; new `ws_send_text_()` + `send_playback_complete_()`; loop() emits `{"type":"playback_complete","ts":<millis>}` once when `spk_pending_.empty() && (now - last_spk_play_ms_) >= 700 ms` (500 ms i2s drain + 200 ms acoustic margin). Reset on every `spk_->play()` with bytes accepted, and on `start_session`/`stop_session`. Build SUCCESS (59 s), OTA flash SUCCESS (4.71 s).
+- **Bridge (main.py, v20):** gates EVERY response on `response.created` (not just manual-commit); `response.done` no longer releases the gate or sends `{"type":"done"}` to satellite — instead arms a rolling 10 s failsafe from `max(response_done_t, last_audio_sent_t)`. New `playback_complete` text-frame handler: 200 ms acoustic margin → send `{"type":"done"}` → release gate → cancel failsafe. Cleanup cancels the failsafe task in the session finally block.
+- **Validation session (21:53:57 → 21:54:32, 35.0 s):** journal scorecard — **1 response.created · 1 response.done · 1 input_audio_transcription.completed** (`grep "type" | sort | uniq -c`). `playback_complete` fired at 21:54:02.903 (1.32 s after response.done); gate released at 21:54:03.104 (exactly +200 ms). Session ended naturally at 30.65 s after response.done (inactivity timeout — **not** the 75 s daemon cap). Ear test: one clean response — Chris signed off.
+- **Caveat (no functional impact):** one `speech_started` fired 98 ms after gate release (residual room decay just outside the 200 ms margin). It produced **no transcription and no second response.created** — the loop is broken at the response-generation layer. Levers if perfection wanted later: longer margin (400–500 ms) or `input_audio_buffer.clear` at gate release. **Not implementing — Phase 2.**
+
+### LED state-machine — characterization (no implementation yet, awaiting decision)
+
+**Root-cause re-confirmation via static analysis tonight:**
+- `satellite1-kis.yaml` LED actions: **exactly one** — `light.turn_on id:led_ring effect:"Listening"` inside `on_wake_word_detected` (line 260-262). No turn-off, no idle/error/thinking branches. Effect "Listening" is `addressable_rainbow` (not the desired blue pulse).
+- `aria_bridge` (.h + .cpp): **zero** LED references — no callbacks, no triggers, no light-component pointer. The C++ component has no ESPHome `Trigger<>` plumbing for state transitions, so YAML has nothing to wire to.
+- FPH stock pattern (`config/satellite1.base.yaml` + `config/common/voice_assistant.yaml` + `config/common/led_ring.yaml`): a `control_leds` script reads a `voice_assistant_phase` global + several others (XMOS flashing state, mute state, timer state, …) and selects from 18 named effects. `voice_assistant` triggers (`on_listening`, `on_stt_vad_start`, `on_intent_progress`, `on_tts_start`, `on_end`, `on_client_connected`/`disconnected`) each call `script.execute: control_leds`. **KIS replaced `voice_assistant` with `aria_bridge`, which exposes none of those triggers → the state machine is structurally orphaned.**
+
+**Why the LED hangs:** wake-word YAML one-shot turn_on → effect runs forever; nothing in YAML or aria_bridge knows the session ended → no turn_off ever fires.
+
+**Fix path options (cost / risk / capability):**
+
+| Option | Change | Time | Risk | Capability |
+|--------|--------|-----:|-----:|------------|
+| **A. YAML-only polling** | Add an `interval: 250ms` block in `satellite1-kis.yaml` that reads `id(aria).is_active()`: on true → `light.turn_on effect:Listening`, on false → `light.turn_off`. No firmware change. | ~10 min | very low | 2-state (active/idle); ~250 ms latency on transitions; no LISTENING-vs-THINKING distinction |
+| **B. Firmware triggers + YAML wiring** | Add ESPHome `Trigger<>` plumbing in aria_bridge (`on_session_start`, `on_response_received`, `on_session_end`, `on_error`) + Python codegen schema; YAML wires `script.execute: control_leds`-style effects per trigger. Mirrors FPH pattern. | ~45–60 min | medium (codegen schema + build + OTA + re-validate Option A interactions) | Full state machine; instant transitions; matches desired spec (LISTENING blue pulse, THINKING chase, ERROR red, IDLE off) |
+| **C. Direct LED control in aria_bridge.cpp** | Add `light::LightState *led_;` setter; in `start_session`/`loop()`/`stop_session` directly call `light_->turn_on()`/`turn_off()`/effect select. | ~30 min | medium (firmware change, tighter coupling, harder to extend) | Full state machine but coupled to one light entity |
+
+**Recommendation:** **Option A tonight** to close out Phase 1 — eliminates the "looks broken" hang with minimal risk and zero firmware change. Defer **Option B** (firmware triggers + full state machine matching the desired spec) to a planned Phase 2 LED ticket. Option A gives basic active-vs-idle; Phase 2 swaps to triggers + effects for LISTENING / THINKING / ERROR distinction.
+
+### LED state machine — IMPLEMENTED (Option B chosen, v21)
+
+Chris approved Option B (full state machine, blue family for normal phases / red for errors). Firmware + YAML in one cycle. Build SUCCESS (59.4 s), OTA SUCCESS (7.38 s), visual validation by Chris across multi-turn sessions confirmed correct behavior.
+
+- **Firmware (`aria_bridge.h` / `.cpp` / `__init__.py`):** added `LedPhase` enum, `CallbackManager<void()>` per phase, `fire_*()` helpers using `atomic.exchange()` so each transition fires only on entry. Five ESPHome Trigger<> classes (`ListeningStartTrigger`, `ThinkingStartTrigger`, `RespondingStartTrigger`, `ErrorTrigger`, `IdleTrigger`) wired through Python codegen schema (`automation.validate_automation` + `CONF_TRIGGER_ID`).
+- **Trigger points:**
+  - `start_session()` → `fire_listening_()` (LED on immediately at wake, not after WS handshake)
+  - ws_recv text `"processing"` → `fire_thinking_()` (Grok generating response)
+  - first binary audio frame → `fire_responding_()` (TTS playing)
+  - ws_recv text `"done"` → `fire_listening_()` (back to listening for follow-up)
+  - state→ERROR (loop's error branch) → `fire_error_()` (red flash before stop)
+  - `stop_session()` → `fire_idle_()` (light off)
+- **YAML (`satellite1-kis.yaml`):** removed direct `light.turn_on` from `on_wake_word_detected` (aria_bridge owns LED now). Added four effects on `led_ring`: `Listening Blue Pulse` (1500ms breathing, 15–60% brightness), `Thinking Blue Chase` (`addressable_scan` 80ms, width 4), `Responding Blue Chase` (`addressable_scan` 40ms, width 6), `Error Red Pulse` (200ms, 30–100%). Each `aria_bridge` trigger calls `light.turn_on` with explicit RGB + effect: LISTENING ~#4080FF mid, THINKING ~#2060FF brighter, RESPONDING ~#0040FF brightest, ERROR pure red. `on_idle` calls `light.turn_off`.
+- **Validation:** Chris ear-tested + visually validated. Multi-turn follow-up window (LISTENING blue pulse after playback_complete) confirmed working.
+
+---
+
+## PHASE 1 CLOSE-OUT — 2026-05-27 (evening)
+
+**Status: COMPLETE.** End-to-end voice round-trip is reliable. Wake → mic → Grok → TTS → speaker → multi-turn → idle. All five Phase 1 bugs validated and signed off by Chris.
+
+### Phase 1 bugs — final state
+
+| # | Bug | Status | Validation |
+|---|-----|--------|------------|
+| 1 | Speaker garble (stutter from one-frame-per-loop drain) | FIXED v18 (`7dcced6`) | Ear test (post-fidelity fixes) |
+| 1b | Mic format (int32/stereo→16-bit mono garbage) | FIXED `1810586`, `4730598` | Grok server_vad fires; transcripts coherent |
+| 3 | Session timeout (sessions never ending) | FIXED `146cb09` | Sessions end ~30 s after last TTS |
+| 2 | Half-duplex feedback (satellite mic hears own TTS → echo turns) | FIXED v20 (firmware playback_complete + bridge gate-on-response.created + 200 ms margin + 10 s rolling failsafe) | Journal scorecard 4/5 strict pass + ear test (one clean response) |
+| LED | State machine orphaned (rainbow on, nothing turns off) | FIXED v21 (Trigger<> codegen + 4-effect palette) | Visual across multi-turn sessions |
+
+### Harness & infrastructure landed
+
+- **Continuous capture** (`sat-test/continuous_capture.py`): single-script 48 kHz/stereo/WASAPI-exclusive, self-patching WAV header (valid on any kill). Chris owns start/stop, no daemon coordination.
+- **Per-session daemon** (`sat-test/auto_capture_daemon.py`): 48 kHz/stereo/WASAPI-exclusive C200 with rolling 30 s ring, `DAEMON_DIAG=1` writes a full-continuous reference for slicing comparison.
+- **Compare tool** (`sat-test/compare_daemon_vs_full.py`): cross-correlates session slice against full reference, detects bursts, reports inside/outside slice. **Proved the daemon is NOT the bug** (drift = 0 ms in the diagnostic run).
+- **Anker C200 native path**: WASAPI exclusive bypasses Windows MME mixing + DSP enhancements off (Chris). Rolloff85 = 22 kHz vs old 16k-MME 2.5 kHz; HF>4k = 68.7%.
+- **Bridge captures**: `/tmp/sat-tts-capture/<ts>_bridge_sent.wav` (48k/stereo what bridge sent), `/tmp/sat-mic-capture/<ts>_raw.wav` (raw sat int32/stereo/16k), `<ts>_to_grok.wav` (16k/mono converted). 2-second incremental flush — always valid WAV.
+
+### Tonight's reference capture (signed off)
+
+- Bug #2 validation: `sat-test/continuous/continuous_20260527T215339.wav` (34.7 s) + `20260527T210509_bridge_sent.wav`. Journal scorecard: 1 response.created, 1 response.done, 1 transcription. `playback_complete` at +1.32 s after response.done, gate released at +200 ms.
+
+### Phase 2 — deferred list
+
+(Carry forward; not blocking. Order is suggestion, not commitment.)
+
+1. **Grok response verbosity** — system prompt's pre-injected home-state + `"Use it"` directive overrides the `"no padding"` rule. `"What time is it?"` returns time + status briefing. Fix path A: edit `config.py::ARIA_SYSTEM_PROMPT` — replace `"Use it"` with `"Reference home state ONLY when relevant to the question. Don't volunteer status unless asked."` + add a simple-factual-question rule. Single-file, ~5 min, test in one session.
+2. **Spurious `speech_started` after gate release** — 98 ms after gate release one server_vad fire happens (residual room decay outside the 200 ms margin). **It produces no transcription and no response.** Levers if desired: longer margin (400–500 ms) or `input_audio_buffer.clear` at gate release.
+3. **Phase M demotion** — manual commit at 30 chunks was a fallback for unreliable server_vad. Server_vad now fires correctly with the mic-format fix; manual commit is likely redundant. Audit: run a session with manual commit disabled, confirm server_vad commits the prompt.
+4. **MWW threshold tuning** (currently 0.7 — was 0.97). Production target depends on use case: 0.97 rejects most played audio (live-only); 0.7 lets laptop-speaker prompts fire for autonomous testing. Calibrate against false-trigger rate.
+5. **TARS XTTS voice quality** — only `tars` voice on the XTTS server, low-band (~1.5 kHz). Phase 2 — either improve the TARS clone reference (`tars_reference.wav`) or add a non-TARS voice to XTTS server.
+6. **528 Hz electrical tone notch refinement** — `MIC_NOTCH_HZ=527,1054` Q=20 in `config.py`. Watch for drift, narrower Q if needed.
+7. **BO Beolit 20 speaker** — music-tuned; possibly wrong for voice-prompt playback testing. Phase 2 hardware audit; recommend a voice-tuned monitor speaker for harness work.
+8. **LED Phase 2 polish** — currently 4 effects. Could add: dimmer IDLE indicator (ambient blue at 5%), a brief "click" effect on tool call, a subtle "warming up" pulse during the CONNECTING gap (currently silent on the LED — wake→connect→listening is instant for fire_listening_, but if WS handshake fails, only ERROR fires).
+
+### Reference branches & commits
+
+- `kis-voice-bridge` on `phase-aria/v18-bridge`: v20 Option A gate logic (`main.py` half-duplex playback_complete handler + 10 s rolling failsafe).
+- `ha-config` on `phase-aria/v19-mww-threshold`: v20 firmware (`aria_bridge` playback_complete signal) + v21 firmware (LED state machine Trigger<> codegen + YAML wiring) + progress log.
