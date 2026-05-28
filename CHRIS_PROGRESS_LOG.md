@@ -328,7 +328,30 @@ Branch `phase-aria/v18-test-trigger` (firmware), `phase-aria/v18-bridge` (bridge
 
 **Power/flash note:** satellite is on the PD wall adapter now → **COM6 is gone, flashing is OTA-only** (`esphome upload --device 192.168.51.245` via the Pi). Boosted speaker DAC volume 0.55→1.0 (`dac_proxy->set_volume(1.0)` in on_boot) and disabled the autotest interval (86400s) so live-wake tests aren't contaminated. OTA'd successfully.
 
-**Bug #1 (speaker garble) — VALIDATED FIXED** on a clean live round-trip (session 20260527T201825, "Hey Jarvis, what time is it?"): speaker plays the TTS **intelligibly** — s6 STT "…18pm Wednesday, May 27th" (peak 12037, loud) matches s5 TTS "He's 18 TM Wednesday, May 27th." vs the old "ee ee"/3.8× stretch. step1→step2 = 1.0. The drain fix cured the underrun. (step5→step6 scored 0.63 — a SCORING ARTIFACT: laptop_mic now includes the prompt + ~30s post-response silence while bridge_sent is response-only; the response portions match. Analyzer should compare just the response window for a true number.) **First clean end-to-end voice round-trip achieved.** #2 (half-duplex) + #4 (Phase-M demote) now have trustworthy capture and are next.
+**Bug #1 (speaker garble) — ~~VALIDATED FIXED~~ RETRACTED: stutter fixed, FIDELITY UNCONFIRMED/POOR (see HARNESS RECALIBRATION below)** — on a clean live round-trip (session 20260527T201825, "Hey Jarvis, what time is it?"): speaker plays the TTS **intelligibly** — s6 STT "…18pm Wednesday, May 27th" (peak 12037, loud) matches s5 TTS "He's 18 TM Wednesday, May 27th." vs the old "ee ee"/3.8× stretch. step1→step2 = 1.0. The drain fix cured the underrun. (step5→step6 scored 0.63 — a SCORING ARTIFACT: laptop_mic now includes the prompt + ~30s post-response silence while bridge_sent is response-only; the response portions match. Analyzer should compare just the response window for a true number.) **First clean end-to-end voice round-trip achieved.** #2 (half-duplex) + #4 (Phase-M demote) now have trustworthy capture and are next.
+
+---
+
+## HARNESS RECALIBRATION (2026-05-27 ~20:30 CDT) — HARD STOP on bug work
+
+Chris: "Until you can trigger the satellite with my laptop speaker and properly cue the recordings, we have no trustworthy test harness." Correct. Today's PASS/DEGRADED/GARBLED numbers are suspect (truncated captures + muffled audio + scoring artifacts). **Phase 1 is NOT done.**
+
+**Honest status of today's "fixes":**
+- **#1 speaker garble:** stutter FIXED (drain, 7dcced6); **fidelity UNCONFIRMED/POOR** (muffled, multi-source — see Diag A). "Whisper can transcribe it" ≠ validated. Premature call retracted.
+- **#3 session timeout:** sessions END (146cb09) but **mechanism inconsistent** — 37.9s clean timeout in session 201825, yet ~3.5s "close-glitch" in earlier sessions; the fast close MAY TRUNCATE the TTS tail. Needs audit.
+- **Captures:** rolling-buffer daemon captured full prompt+response in 201825 (timing audit), but earlier sessions were truncated; muffled fidelity makes ear-validation unreliable.
+
+**Diagnostic findings (session 20260527T201825):**
+- **A (audio quality):** MUFFLING (HF rolloff), not noise (SNR 26–29dB, 0% clip). Rolloff85: prompt via laptop mic ~2.5kHz; **digital TTS (bridge_sent, pre-speaker) ~1.6kHz** (XTTS TARS voice is low-bandwidth at the SOURCE — possibly the deep TARS voice character or an XTTS quality setting); satellite speaker output ~0.8kHz. TTS source is the dominant limiter for the response; laptop mic limits input capture.
+- **C (timing):** connect 20:18:25 → commit :26 → response.created :28 → response.done+XTTS :31 → ended (37.9s) 20:19:03. laptop_mic (53.3s) contains full prompt (8.5–10.6s) AND full TTS (16.3–19.0s ≈ 3.1s TTS, NOT truncated). Long file = 10s preroll + ~30s post-TTS dead air (timeout) + 5s postroll. Nit: 30s post-TTS timeout too long.
+
+**NEW TASK — Harness reliability (3 requirements, ALL required before bug validation):**
+1. **Laptop speaker reliably triggers the satellite** (BLOCKING). micro_wake_word 0.97 cutoff rejects played audio. Try 0.97→0.85→0.7; check FPH's automated wake-test approach; consider a test-mode threshold. (Autotest interval kept as fallback.)
+2. **Capture timing gap-free** (timeline audit + daemon fixes; full prompt + full TTS tail every session).
+3. **Audio-fidelity baseline** — quantify independently: (A) sat-mic chain (Chris voice→sat_mic_raw), (B) speaker chain (bridge_sent→laptop_mic), (C) laptop mic as reference (Anker C20 baseline).
+
+**NEW TASK — LED state machine (Phase-1 close-out):** KIS replaced `voice_assistant` (FPH's `control_leds` state machine, called on listening/thinking/replying/end) with `aria_bridge`, which has **ZERO LED control**. Only action is one-shot `light.turn_on "Listening"` (rainbow) on wake → nothing turns it off → **LED hangs forever** (no idle/thinking/error). Fix = aria_bridge drives the LED (state callbacks or is_active polling).
+**Desired LED behavior (design target):** IDLE = off · WAKE/LISTENING = blue slow breathing pulse · THINKING/PROCESSING/RESPONDING = blue rotating chase · ERROR = red · returns to IDLE cleanly on session end.
 
 ### Option 2 (bridge-side mic-format fix) — IMPLEMENTED & DEPLOYED, but UNVALIDATED (blocked by wake word)
 - `kis-voice-bridge` branch `phase-aria/fix-mic-format` (commit 1810586): added `sat_mic_to_pcm16()` in `bridge/main.py` — raw bytes → int32 LE → reshape stereo → channel 0 → Q31→Q15 (`>>16`) → ×6 gain w/ saturation → 16-bit mono; used for both the audio-level logging and the resample→Grok path. Deployed to the Pi + service restarted clean.
