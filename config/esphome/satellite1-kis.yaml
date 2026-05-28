@@ -138,14 +138,24 @@ globals:
 # path without depending on micro_wake_word (which won't fire on played/synthetic audio).
 # REMOVE before production.
 interval:
-  - interval: 86400s          # v18: autotest DISABLED (was 90s) — trigger via live wake word; re-enable for autonomous loop
+  - interval: 86400s          # v23: autotest body kept for emergency revival (uses full wake flow) but disabled
     then:
       - if:
           condition:
             lambda: 'return !id(aria).is_active();'
           then:
-            - logger.log: "v18 autotest: starting ARIA session (wake-word bypass)"
-            - lambda: 'id(aria).start_session();'
+            - logger.log: "v23 autotest: simulating full wake flow (only fires when interval is lowered for diagnostics)"
+            - lambda: |-
+                char uuid[13];
+                snprintf(uuid, sizeof(uuid), "%08x%04x",
+                         (unsigned) random_uint32(), (unsigned)(random_uint32() & 0xFFFF));
+                id(last_session_uuid) = std::string(uuid);
+                char payload[160];
+                snprintf(payload, sizeof(payload),
+                         "{\"wake_word\":\"AUTOTEST\",\"probability\":%.3f,\"max_probability\":%.3f,\"autotest\":true}",
+                         id(last_wake_prob_avg), id(last_wake_prob_max));
+                id(aria).emit_event("wake_word_detected", std::string(payload));
+                id(aria).start_session_with_uuid(id(last_session_uuid));
 
 # --- XMOS Co-Processor Init (SPI handshake + reset) ---
 satellite1:

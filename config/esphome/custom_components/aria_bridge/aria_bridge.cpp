@@ -192,13 +192,15 @@ bool ARIABridge::http_post_binary_(const std::string &url, const uint8_t *body, 
 struct PrewakeUploadArg {
   ARIABridge *self;
   std::string url;                  // includes session_id + format query string
-  std::vector<uint8_t> data;
+  uint8_t *data;                    // PSRAM-allocated via heap_caps_malloc; freed in task
+  size_t len;
 };
 void ARIABridge::prewake_upload_task_(void *param) {
   PrewakeUploadArg *arg = static_cast<PrewakeUploadArg *>(param);
-  ESP_LOGI(TAG, "prewake upload: %u bytes -> %s", (unsigned) arg->data.size(), arg->url.c_str());
-  bool ok = arg->self->http_post_binary_(arg->url, arg->data.data(), arg->data.size());
+  ESP_LOGI(TAG, "prewake upload: %u bytes -> %s", (unsigned) arg->len, arg->url.c_str());
+  bool ok = arg->self->http_post_binary_(arg->url, arg->data, arg->len);
   ESP_LOGI(TAG, "prewake upload: %s", ok ? "OK" : "FAIL");
+  heap_caps_free(arg->data);
   delete arg;
   vTaskDelete(nullptr);
 }
@@ -206,17 +208,23 @@ void ARIABridge::prewake_upload_task_(void *param) {
 void ARIABridge::start_session_with_uuid(const std::string &uuid) {
   this->session_uuid_ = uuid;
   // Snapshot the pre-wake ring NOW (before the WS comes up and starts consuming new mic data).
-  // Spawn a task to POST it so the wake-handler lambda doesn't block.
-  std::vector<uint8_t> snap = this->snapshot_prewake();
+  // Spawn a task to POST it so the wake-handler lambda doesn't block. Snapshot uses PSRAM
+  // (256KB allocation in internal heap caused bad_alloc crash on ESP32-S3).
+  PrewakeBuffer snap = this->snapshot_prewake();
   if (!this->prewake_post_url_.empty() && !snap.empty()) {
     char url_buf[256];
     snprintf(url_buf, sizeof(url_buf), "%s?session_id=%s&format=int32_stereo_16k",
              this->prewake_post_url_.c_str(), uuid.c_str());
-    auto *arg = new PrewakeUploadArg();
-    arg->self = this;
-    arg->url = url_buf;
-    arg->data = std::move(snap);
-    xTaskCreatePinnedToCore(prewake_upload_task_, "aria_pwup", 4096, arg, 3, nullptr, 0);
+    // copy snapshot to a raw PSRAM buffer the upload task owns + frees (avoids std::vector
+    // allocator-comparison issues across task boundary).
+    uint8_t *buf = static_cast<uint8_t *>(heap_caps_malloc(snap.size(), MALLOC_CAP_SPIRAM));
+    if (buf) {
+      memcpy(buf, snap.data(), snap.size());
+      auto *arg = new PrewakeUploadArg{this, url_buf, buf, snap.size()};
+      xTaskCreatePinnedToCore(prewake_upload_task_, "aria_pwup", 4096, arg, 3, nullptr, 0);
+    } else {
+      ESP_LOGW(TAG, "prewake: PSRAM alloc failed (%u bytes)", (unsigned) snap.size());
+    }
   }
   this->emit_event("aria_session_started", "{}");
   this->start_session();
@@ -294,9 +302,9 @@ void ARIABridge::prewake_ring_write_(const uint8_t *data, size_t len) {
   }
 }
 
-std::vector<uint8_t> ARIABridge::snapshot_prewake() {
+ARIABridge::PrewakeBuffer ARIABridge::snapshot_prewake() {
   std::lock_guard<std::mutex> lock(this->prewake_mutex_);
-  std::vector<uint8_t> out;
+  PrewakeBuffer out;     // PSRAM-allocated; 256KB on internal heap caused bad_alloc crash
   if (this->prewake_ring_.empty()) return out;
   if (!this->prewake_full_) {
     out.assign(this->prewake_ring_.begin(), this->prewake_ring_.begin() + this->prewake_head_);

@@ -56,7 +56,10 @@ class ARIABridge : public Component {
   bool is_active() const { return this->state_ != BridgeState::IDLE; }
 
   // v23: pre-wake audio audit substrate — PSRAM ring fed unconditionally by the mic callback.
-  std::vector<uint8_t> snapshot_prewake();
+  // Output uses ExternalRAMAllocator: a 256KB output buffer on the internal heap is too big
+  // (causes bad_alloc → IllegalInstruction crash on ESP32-S3). PSRAM allocator avoids it.
+  using PrewakeBuffer = std::vector<uint8_t, ExternalRAMAllocator<uint8_t>>;
+  PrewakeBuffer snapshot_prewake();
   std::string current_session_uuid() const { return this->session_uuid_; }
 
   // v23: bridge event emit. Source is implicitly "satellite"; fire-and-forget HTTP POST queued
