@@ -302,6 +302,26 @@ Phase 1 (v17) gets single-turn voice working in a quiet room — the minimum via
 1. Capture real bridge mic bytes; confirm they are int32 (predicted by the code).
 2. Fix `aria_bridge` to extract one channel + convert int32→16-bit mono (replicate MicrophoneSource behavior: e.g., take channel 0 like voice_assistant, q31→int16), instead of shipping the raw callback bytes. Then retest wake + round-trip.
 
+---
+
+## v18 autonomous loop (2026-05-27 ~18:00–19:05 CDT)
+
+Branch `phase-aria/v18-test-trigger` (firmware), `phase-aria/v18-bridge` (bridge). Auto-diagnosed via the per-session capture daemon + STT chain analyzer (`sat-test/auto_capture_daemon.py`, `session_analyzer.py`).
+
+**Wake-word trigger blocker (carried over):** played audio (recorded OR clean XTTS-TARS) does NOT fire micro_wake_word even loud at 12" — only live human voice does. Acoustic coupling confirmed fine (Chris). It's the MWW neural-net rejecting played/synthetic audio at the 0.97 cutoff. Hypothesis C (lower cutoff to ~0.7) is the lead fix — NOT YET TESTED. To unblock autonomous testing, added a **TEST-ONLY wake-bypass**: a 90s `interval` in satellite1-kis.yaml that calls `aria.start_session()` when idle. REMOVE before production.
+
+**v17 committed** (`4197fa7`): memory_flasher (XMOS already at v1.0.3, dormant). KEEP.
+
+**Bridge XTTS capture gap fixed** (`5b0bd91`): `bridge_sent.wav` only captured the Grok-native path; with XTTS backend it was empty. Now captures the XTTS TTS too → step5→step6 measurable.
+
+**#1 speaker garble (underrun) — FIX IMPLEMENTED, underrun resolved, intelligibility unconfirmed** (`7dcced6`): `aria_bridge.cpp loop()` read one ~5ms WS frame/iteration (~3× slower than 48k real-time) → 500ms speaker buffer underran → ~3.8× stretch + stutter ("ee ee"/looping). Fix: drain up to 24 frames/loop, hold un-accepted bytes in `spk_pending_` (backpressure, no drop/block). Result: duration ratio 3.76×→~1×, non-silent 6%→46% (continuous, not sparse). BUT: USB-5V speaker too quiet (s6 peak 1542 vs TTS 9149) → STT can't confirm intelligibility (the >0.85 criterion needs PD power or Chris's ear). And sessions now close fast (~3.5s, the v13 close-time framing glitch) which may truncate the TTS tail — needs follow-up.
+
+**#3 session timeout — FIXED** (`146cb09`): `send_task_` refreshed `last_activity_ms_` on every mic-send; continuous mic streaming kept sessions alive forever (active_sessions piled to 2, daemon tracking broke). Now refreshed only on TTS-recv → sessions end (active_sessions returns to 0; were 77s, now ~3.5–13s). Unblocked clean session boundaries for the capture framework.
+
+**#2 half-duplex, #4 Phase-M demotion: NOT STARTED.** **#5 528Hz notch: deployed earlier, deprioritized.**
+
+**Measurement limit:** the quiet USB-5V speaker (TAS2780 low-power) makes autonomous STT validation of the speaker chain unreliable. PD power (louder amp) or Chris's ear-test is needed to confirm #1. The capture framework + analyzer otherwise work well (auto-diagnosed the garble end-to-end).
+
 ### Option 2 (bridge-side mic-format fix) — IMPLEMENTED & DEPLOYED, but UNVALIDATED (blocked by wake word)
 - `kis-voice-bridge` branch `phase-aria/fix-mic-format` (commit 1810586): added `sat_mic_to_pcm16()` in `bridge/main.py` — raw bytes → int32 LE → reshape stereo → channel 0 → Q31→Q15 (`>>16`) → ×6 gain w/ saturation → 16-bit mono; used for both the audio-level logging and the resample→Grok path. Deployed to the Pi + service restarted clean.
 - **ARCHITECTURAL LESSON (the real takeaway):** when replacing `voice_assistant` with a custom integration, ESPHome's MicrophoneSource wrapper layer (`channels:` + `gain_factor:`) is **NOT optional** — it does the channel-extraction + int32(Q31)→int16(Q15) + gain that the raw `add_data_callback` skips. `aria_bridge` consumed the raw callback and shipped int32/stereo bytes that the bridge read as 16-bit mono → garbage. Custom integrations MUST replicate this conversion explicitly (done here bridge-side; the proper fix is firmware-side in aria_bridge — Option 1, deferred).
